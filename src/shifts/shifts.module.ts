@@ -2,7 +2,7 @@ import { BadRequestException, Body, Controller, ForbiddenException, Get, Injecta
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Prisma, Role } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { IsIn, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
 import { CurrentPrincipal } from '../common/decorators';
 import { DateRangeQueryDto, dateFilter } from '../common/date-range';
 import { pageArgs, toPage } from '../common/pagination';
@@ -16,12 +16,20 @@ export class OpenShiftDto {
   /** Cash in the drawer at the start */
   @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0)
   openingCash: number;
+
+  /** Riel in the drawer at the start (dual currency stores) */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0)
+  openingKhr?: number;
 }
 
 export class CloseShiftDto {
   /** Cash counted in the drawer at the end */
   @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0)
   closingCash: number;
+
+  /** Riel counted at the end (dual currency stores) */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0)
+  closingKhr?: number;
 
   @IsOptional() @IsString() @MaxLength(500)
   note?: string;
@@ -45,7 +53,7 @@ export class ShiftsService {
     assertStoreAccess(p, dto.storeId);
     const existing = await this.prisma.shift.findFirst({ where: { userId: p.id, storeId: dto.storeId, status: 'OPEN' } });
     if (existing) throw new BadRequestException('You already have an open shift in this store');
-    return this.prisma.shift.create({ data: { storeId: dto.storeId, userId: p.id, openingCash: dto.openingCash } });
+    return this.prisma.shift.create({ data: { storeId: dto.storeId, userId: p.id, openingCash: dto.openingCash, openingKhr: dto.openingKhr ?? 0 } });
   }
 
   /** The caller's open shift in a store, or null. */
@@ -66,9 +74,14 @@ export class ShiftsService {
         closedAt: new Date(),
         closingCash: dto.closingCash,
         expectedCash: summary.expectedCash,
+        closingKhr: dto.closingKhr ?? null,
+        expectedKhr: summary.khr.expected,
         note: dto.note,
       },
-    }).then((s) => ({ ...s, summary, difference: D(dto.closingCash).minus(summary.expectedCash) }));
+    }).then((s) => ({
+      ...s, summary, difference: D(dto.closingCash).minus(summary.expectedCash),
+      differenceKhr: dto.closingKhr === undefined ? null : dto.closingKhr - summary.khr.expected,
+    }));
   }
 
   async get(p: Principal, id: string) {
@@ -100,12 +113,12 @@ export class ShiftsService {
   }
 
   /** Totals for the cash-drawer report. */
-  private async summarize(shift: { id: string; storeId: string; userId: string; openingCash: Prisma.Decimal; openedAt: Date; closedAt: Date | null }) {
-    const [sales, payments, cashRefunds, topups, voucherSales] = await Promise.all([
+  private async summarize(shift: { id: string; storeId: string; userId: string; openingCash: Prisma.Decimal; openingKhr: number; openedAt: Date; closedAt: Date | null }) {
+    const [sales, payments, cashRefunds, topups, voucherSales, khrCash] = await Promise.all([
       this.prisma.sale.aggregate({
         where: { shiftId: shift.id },
         _count: true,
-        _sum: { total: true, discountTotal: true, taxTotal: true, changeDue: true },
+        _sum: { total: true, discountTotal: true, taxTotal: true, changeDue: true, changeUsd: true, changeKhr: true },
       }),
       this.prisma.payment.groupBy({ by: ['method'], where: { sale: { shiftId: shift.id } }, _sum: { amount: true } }),
       this.prisma.refund.aggregate({
@@ -119,12 +132,17 @@ export class ShiftsService {
       }),
       this.prisma.walletTransaction.groupBy({ by: ['method'], where: { shiftId: shift.id, type: 'TOPUP' }, _sum: { amount: true }, _count: true }),
       this.prisma.voucher.groupBy({ by: ['soldMethod'], where: { soldShiftId: shift.id }, _sum: { value: true }, _count: true }),
+      this.prisma.payment.aggregate({ where: { sale: { shiftId: shift.id }, method: 'CASH', currency: 'KHR' }, _sum: { amount: true, tendered: true }, _count: true }),
     ]);
     const cashVouchers = voucherSales.find((x) => x.soldMethod === 'CASH')?._sum.value ?? D(0);
     const cashTopups = topups.find((x) => x.method === 'CASH')?._sum.amount ?? D(0);
     const byMethod = Object.fromEntries(payments.map((x) => [x.method, x._sum.amount ?? D(0)]));
-    const cashIn = byMethod.CASH ?? D(0);
-    const change = sales._sum.changeDue ?? D(0);
+    // Two drawers: dollars and riel. Riel cash is counted in riel; its dollar value is not in the dollar drawer.
+    const khrUsdValue = khrCash._sum.amount ?? D(0);
+    const cashIn = (byMethod.CASH ?? D(0)).minus(khrUsdValue);
+    const change = sales._sum.changeUsd ?? D(0);
+    const khrIn = Number(khrCash._sum.tendered ?? 0);
+    const khrChange = sales._sum.changeKhr ?? 0;
     const refunds = cashRefunds._sum.amount ?? D(0);
     return {
       salesCount: sales._count,
@@ -136,6 +154,7 @@ export class ShiftsService {
       walletTopups: Object.fromEntries(topups.map((x) => [x.method ?? 'OTHER', x._sum.amount ?? D(0)])),
       voucherSales: Object.fromEntries(voucherSales.map((x) => [x.soldMethod ?? 'OTHER', x._sum.value ?? D(0)])),
       expectedCash: shift.openingCash.plus(cashIn).minus(change).minus(refunds).plus(cashTopups).plus(cashVouchers),
+      khr: { opening: shift.openingKhr, received: khrIn, change: khrChange, payments: khrCash._count, expected: shift.openingKhr + khrIn - khrChange },
     };
   }
 

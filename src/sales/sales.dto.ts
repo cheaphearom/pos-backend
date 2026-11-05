@@ -1,6 +1,6 @@
 import { OrderType, PaymentMethod, SaleStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, Matches, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsIn, Matches, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { DateRangeQueryDto } from '../common/date-range';
 
 export class SaleItemDto {
@@ -37,9 +37,23 @@ export class PaymentDto {
   /** Wallet card PIN (only for method WALLET; never stored) */
   @IsOptional() @Matches(/^\d{4,6}$/, { message: 'PIN must be 4 to 6 digits' })
   pin?: string;
+
+  /** Cash in riel: currency KHR, the riel handed over (tendered) and the rate used; amount is the USD value */
+  @IsOptional() @IsIn(['USD', 'KHR'])
+  currency?: 'USD' | 'KHR';
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100)
+  tendered?: number;
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  rate?: number;
 }
 
 export class CreateSaleDto {
+  /** Dual currency stores: give change as whole dollars + riel (MIXED, default), all riel or all dollars */
+  @IsOptional() @IsIn(['MIXED', 'KHR', 'USD'])
+  changeIn?: 'MIXED' | 'KHR' | 'USD';
+
   /** Manager approval for a discount above the cashier limit (from POST /approvals) */
   @IsOptional() @IsUUID()
   approvalId?: string;

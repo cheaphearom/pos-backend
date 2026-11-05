@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsNumber, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 
 export class CreateStoreDto {
   /** Short unique code used in receipt numbers, e.g. PP01 */
@@ -62,6 +62,10 @@ export class CreateStoreDto {
   /** Cashier voids need a manager PIN */
   @IsOptional() @IsBoolean()
   voidNeedsApproval?: boolean;
+
+  /** Riel per 1 USD for cash in riel (e.g. 4100); null turns riel cash off */
+  @IsOptional() @ValidateIf((_, v) => v !== null) @Type(() => Number) @IsInt() @Min(1000) @Max(10000)
+  khrRate?: number | null;
 }
 
 export class UpdateStoreDto extends PartialType(CreateStoreDto) {

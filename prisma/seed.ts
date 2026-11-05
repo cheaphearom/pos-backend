@@ -8,9 +8,9 @@ import * as bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 const STORES = [
-  { code: 'PP01', name: 'Phnom Penh - Central', address: 'Street 51, Daun Penh, Phnom Penh', phone: '023 000 001', taxRate: 0.1 },
-  { code: 'PP02', name: 'Phnom Penh - Toul Kork', address: 'Street 315, Toul Kork, Phnom Penh', phone: '023 000 002', taxRate: 0.1 },
-  { code: 'SR01', name: 'Siem Reap - Old Market', address: 'Pub Street, Siem Reap', phone: '063 000 001', taxRate: 0.1 },
+  { code: 'PP01', name: 'Phnom Penh - Central', address: 'Street 51, Daun Penh, Phnom Penh', phone: '023 000 001', taxRate: 0.1, khrRate: 4100 },
+  { code: 'PP02', name: 'Phnom Penh - Toul Kork', address: 'Street 315, Toul Kork, Phnom Penh', phone: '023 000 002', taxRate: 0.1, khrRate: 4100 },
+  { code: 'SR01', name: 'Siem Reap - Old Market', address: 'Pub Street, Siem Reap', phone: '063 000 001', taxRate: 0.1, khrRate: 4100 },
 ];
 
 const CATALOGUE: Record<string, [string, string, number, number, boolean?][]> = {

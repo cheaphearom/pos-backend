@@ -104,6 +104,9 @@ model Store {
   /// Cashiers need a manager PIN to refund / to void a sale
   refundNeedsApproval Boolean @default(true) @map("refund_needs_approval")
   voidNeedsApproval   Boolean @default(true) @map("void_needs_approval")
+
+  /// Dual currency: riel per 1 USD (e.g. 4100). Empty = riel cash is off for this store.
+  khrRate Int? @map("khr_rate")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -365,6 +368,10 @@ model Shift {
   openingCash  Decimal     @map("opening_cash") @db.Decimal(14, 2)
   closingCash  Decimal?    @map("closing_cash") @db.Decimal(14, 2) // counted by cashier
   expectedCash Decimal?    @map("expected_cash") @db.Decimal(14, 2) // calculated by system
+  /// Riel drawer (dual currency stores)
+  openingKhr   Int         @default(0) @map("opening_khr")
+  closingKhr   Int?        @map("closing_khr")
+  expectedKhr  Int?        @map("expected_khr")
   note         String?
   openedAt     DateTime    @default(now()) @map("opened_at")
   closedAt     DateTime?   @map("closed_at")
@@ -404,6 +411,9 @@ model Sale {
   amountDue      Decimal    @map("amount_due") @db.Decimal(14, 2) // total - pointsDiscount
   amountPaid     Decimal    @map("amount_paid") @db.Decimal(14, 2)
   changeDue      Decimal    @default(0) @map("change_due") @db.Decimal(14, 2)
+  /// How the change was given: dollars + riel (riel rounded to 100)
+  changeUsd      Decimal    @default(0) @map("change_usd") @db.Decimal(14, 2)
+  changeKhr      Int        @default(0) @map("change_khr")
   pointsEarned   Int        @default(0) @map("points_earned")
   couponCodeId   String?    @map("coupon_code_id") @db.Uuid
   couponDiscount Decimal    @default(0) @map("coupon_discount") @db.Decimal(14, 2)
@@ -466,6 +476,10 @@ model Payment {
   method    PaymentMethod
   amount    Decimal       @db.Decimal(14, 2)
   reference String?       @db.VarChar(100) // card approval code, KHQR transaction id...
+  /// Cash in riel: amount is the USD value; tendered is the riel handed over, at rate riel per USD
+  currency  String        @default("USD") @db.VarChar(3)
+  tendered  Decimal?      @db.Decimal(16, 2)
+  rate      Decimal?      @db.Decimal(12, 4)
   createdAt DateTime      @default(now()) @map("created_at")
 
   sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)

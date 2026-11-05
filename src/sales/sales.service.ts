@@ -18,13 +18,14 @@ import { CouponCheck, CouponsService } from '../coupons/coupons.module';
 import { VouchersService } from '../vouchers/vouchers.module';
 import { RecipesService } from '../recipes/recipes.module';
 import { REPORT_TIMEZONE } from '../config';
+import { khrToUsd, splitChange } from './cash';
 import { CreateRefundDto, CreateSaleDto, SaleQueryDto, VoidSaleDto } from './sales.dto';
 
 const D = (v: Prisma.Decimal.Value) => new Prisma.Decimal(v);
 const ZERO = D(0);
 
 const receiptInclude = {
-  store: { select: { id: true, code: true, name: true, address: true, phone: true, currency: true } },
+  store: { select: { id: true, code: true, name: true, address: true, phone: true, currency: true, khrRate: true } },
   cashier: { select: { id: true, fullName: true } },
   customer: { select: { id: true, code: true, name: true, phone: true, points: true } },
   items: { orderBy: { lineNo: 'asc' }, include: { promotion: { select: { id: true, name: true } } } },
@@ -107,6 +108,17 @@ export class SalesService {
     if (nonCash.gt(amountDue)) throw new BadRequestException('Card / KHQR / transfer payments cannot be more than the amount due');
     const changeDue = paid.minus(amountDue);
 
+    // Dual currency: riel cash is checked against the store rate (5% leeway for offline tills with an older rate).
+    for (const pay of dto.payments) {
+      if ((pay.currency ?? 'USD') !== 'KHR') continue;
+      if (pay.method !== 'CASH') throw new BadRequestException('Only cash can be paid in riel');
+      if (!store.khrRate) throw new BadRequestException('Riel cash is not set up for this store');
+      if (!pay.tendered || pay.tendered % 100 !== 0) throw new BadRequestException('Riel cash must be in steps of 100');
+      if (!pay.rate || Math.abs(pay.rate - store.khrRate) > store.khrRate * 0.05) throw new BadRequestException(`The exchange rate is now ${store.khrRate} riel per dollar; enter the riel again`);
+      if (Math.abs(khrToUsd(pay.tendered, pay.rate) - pay.amount) > 0.005) throw new BadRequestException(`${pay.tendered} riel at ${pay.rate} is ${khrToUsd(pay.tendered, pay.rate)} dollars, not ${pay.amount}`);
+    }
+    const change = splitChange(changeDue.toNumber(), store.khrRate, dto.changeIn);
+
     const userId = userIdOf(p);
     if (offlineAt && dto.payments.some((x) => x.method === 'VOUCHER')) throw new BadRequestException('Vouchers need a connection and cannot be used offline');
     const usesWallet = dto.payments.some((x) => x.method === 'WALLET');
@@ -175,6 +187,8 @@ export class SalesService {
               amountDue,
               amountPaid: paid,
               changeDue,
+              changeUsd: change.usd,
+              changeKhr: change.khr,
               note: dto.note,
               ...(offlineAt && { createdAt: offlineAt }),
               items: {
@@ -197,7 +211,12 @@ export class SalesService {
                   lineTotal: priced.lines[i].total,
                 })),
               },
-              payments: { create: dto.payments.map((x) => ({ method: x.method, amount: x.amount, reference: x.reference })) },
+              payments: {
+                create: dto.payments.map((x) => ({
+                  method: x.method, amount: x.amount, reference: x.reference,
+                  ...(x.currency === 'KHR' && { currency: 'KHR', tendered: x.tendered, rate: x.rate }),
+                })),
+              },
             },
           });
 

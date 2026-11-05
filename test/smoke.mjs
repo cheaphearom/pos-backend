@@ -588,5 +588,46 @@ const locked = await call('POST', '/approvals', { token: cashier, body: { storeI
 ok(locked.s === 403 && /Too many wrong PINs/.test(locked.j.message), 'after 5 wrong PINs even the right one waits: ' + locked.j.message);
 }
 
+// ── USD / KHR dual currency (PP01: 4100 riel = $1). 10 waters = $3.85
+{
+  const cur = (await call('GET', `/shifts/current?storeId=${pp01.id}`, { token: cashier })).j;
+  if (cur?.id) {
+    const sum = (await call('GET', `/shifts/${cur.id}`, { token: cashier })).j.summary;
+    await call('POST', `/shifts/${cur.id}/close`, { token: cashier, body: { closingCash: Number(sum.expectedCash), closingKhr: sum.khr.expected } });
+  }
+  const sh = await call('POST', '/shifts/open', { token: cashier, body: { storeId: pp01.id, openingCash: 20, openingKhr: 10000 } });
+  ok(sh.s === 201 && sh.j.openingKhr === 10000, 'shift opened with $20 and 10,000 riel');
+  const sell = (payments, extra = {}) => call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, items: [{ productId: water.id, quantity: 10 }], payments, ...extra } });
+  const khr = (riel, rate = 4100) => ({ method: 'CASH', currency: 'KHR', tendered: riel, rate, amount: Math.round((riel / rate) * 100) / 100 });
+  const a = await sell([khr(16000)]);
+  ok(a.s === 201 && a.j.total === '3.85' && a.j.payments[0].currency === 'KHR' && a.j.payments[0].tendered === '16000' && a.j.payments[0].amount === '3.9', 'paid 16,000 riel ($3.90) for $3.85');
+  ok(a.j.changeKhr === 200 && a.j.changeUsd === '0' && a.j.changeDue === '0.05', `change $0.05 given as 200 riel (${a.j.changeKhr})`);
+  const b = await sell([{ method: 'CASH', amount: 2 }, khr(8000)]);
+  ok(b.s === 201 && b.j.changeKhr === 400 && b.j.changeDue === '0.1', 'paid $2 + 8,000 riel: change 400 riel');
+  const c = await sell([{ method: 'CASH', amount: 10 }], { changeIn: 'USD' });
+  ok(c.j.changeUsd === '6.15' && c.j.changeKhr === 0, 'change all in dollars: $6.15');
+  const d = await sell([{ method: 'CASH', amount: 10 }]);
+  ok(d.j.changeUsd === '6' && d.j.changeKhr === 600, 'change $6.15 the Cambodian way: $6 + 600 riel');
+  const e = await sell([{ method: 'CASH', amount: 5 }], { changeIn: 'KHR' });
+  ok(e.j.changeUsd === '0' && e.j.changeKhr === 4700, 'change all in riel: $1.15 = 4,700 riel');
+  ok((await sell([{ ...khr(16000), amount: 3.8 }])).s === 400, 'wrong dollar value for the riel -> 400');
+  ok(/exchange rate is now 4100/.test((await sell([khr(16000, 3000)])).j.message), 'a very different rate is refused');
+  ok((await sell([khr(16050)])).s === 400, 'riel must be in steps of 100');
+  ok((await sell([{ method: 'CARD', currency: 'KHR', tendered: 16000, rate: 4100, amount: 3.85 }])).s === 400, 'only cash can be paid in riel');
+  ok((await sell([khr(16000, 4150)])).s === 201, 'an offline till with a slightly older rate (4150) is accepted');
+  await call('PATCH', `/stores/${pp02.id}`, { token: admin, body: { khrRate: null } });
+  ok(/not set up/.test((await call('POST', '/sales', { token: mgr, body: { storeId: pp02.id, items: [{ productId: water.id, quantity: 1 }], payments: [khr(4100)] } })).j.message), 'store with riel off refuses riel cash');
+  await call('PATCH', `/stores/${pp02.id}`, { token: admin, body: { khrRate: 4100 } });
+  // Drawer: $20 + 2 + 10 + 10 + 5 - 6.15 - 6 = $34.85; riel 10,000 + 16,000 + 8,000 + 16,000 - 200 - 400 - 600 - 4,700 - (change of the 4150 sale)
+  const s4150 = Math.round((16000 / 4150) * 100) / 100; // 3.86 → change 0.01 → 0 riel
+  const summary = (await call('GET', `/shifts/${sh.j.id}`, { token: cashier })).j.summary;
+  ok(Number(summary.expectedCash) === 34.85, `dollar drawer expected $34.85 (${summary.expectedCash})`);
+  ok(summary.khr.received === 40000 && summary.khr.change === 5900 && summary.khr.expected === 44100, `riel drawer: +40,000 in, -5,900 change, expected ${summary.khr.expected} (4150 sale paid ${s4150})`);
+  const closedS = (await call('POST', `/shifts/${sh.j.id}/close`, { token: cashier, body: { closingCash: 34.85, closingKhr: 44000 } })).j;
+  ok(Number(closedS.difference) === 0 && closedS.differenceKhr === -100 && closedS.expectedKhr === 44100, 'close: dollars balance, riel 100 short');
+  const rec = (await call('GET', `/sales/${d.j.receiptNo}`, { token: cashier })).j;
+  ok(rec.store.khrRate === 4100, 'receipt carries the store rate');
+}
+
 await new Promise((r) => setTimeout(r, 2500));
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');
