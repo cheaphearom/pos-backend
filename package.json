@@ -8,6 +8,7 @@
     "start:dev": "nest start --watch",
     "test": "jest",
     "test:smoke": "node test/smoke.mjs",
+    "postinstall": "prisma generate",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",

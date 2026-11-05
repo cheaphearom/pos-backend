@@ -3,6 +3,7 @@ RUN apk add --no-cache openssl
 WORKDIR /app
 COPY package.json package-lock.json* ./
 COPY apps/api/package.json apps/api/
+COPY apps/api/prisma apps/api/prisma
 RUN npm ci -w apps/api --include-workspace-root
 COPY apps/api apps/api
 RUN npm run db:generate -w apps/api && npm run build -w apps/api
