@@ -1,9 +1,8 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
-import { Role } from '@prisma/client';
-import { CurrentPrincipal, Roles, Scopes } from '../common/decorators';
+import { CurrentPrincipal, Scopes } from '../common/decorators';
 import { Principal } from '../common/principal';
-import { CreateRefundDto, CreateSaleDto, SaleQueryDto } from './sales.dto';
+import { CreateRefundDto, CreateSaleDto, SaleQueryDto, VoidSaleDto } from './sales.dto';
 import { SalesService } from './sales.service';
 
 @ApiTags('Sales')
@@ -33,10 +32,18 @@ export class SalesController {
     return this.sales.get(p, id);
   }
 
-  @Roles(Role.STORE_MANAGER)
+  /** Managers refund; cashiers too, with a manager PIN when the store requires it (see /approvals). */
   @Scopes('sales:refund')
   @Post(':id/refunds')
   refund(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: CreateRefundDto) {
     return this.sales.refund(p, id, dto);
+  }
+
+  /** Cancel a whole sale from today. Cashiers need a manager PIN when the store requires it. */
+  @Scopes('sales:refund')
+  @HttpCode(200)
+  @Post(':id/void')
+  void(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: VoidSaleDto) {
+    return this.sales.void(p, id, dto);
   }
 }

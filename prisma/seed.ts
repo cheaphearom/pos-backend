@@ -59,6 +59,10 @@ async function main() {
   await user('cashier1@pos.local', 'Srey Mom (Cashier PP01)', Role.CASHIER, [stores[0].id]);
   await user('cashier2@pos.local', 'Visal Kim (Cashier PP02)', Role.CASHIER, [stores[1].id]);
   await user('cashier3@pos.local', 'Bopha Sok (Cashier SR01)', Role.CASHIER, [stores[2].id]);
+  // Manager approval PINs (typed on a cashier's POS for big discounts, refunds and voids)
+  for (const [email, pin] of [['manager.pp@pos.local', '2580'], ['manager.sr@pos.local', '1397'], ['admin@pos.local', '9024']]) {
+    await prisma.user.update({ where: { email }, data: { approvalPinHash: await bcrypt.hash(pin, 10) } });
+  }
 
   let n = 0;
   for (const [categoryName, items] of Object.entries(CATALOGUE)) {
@@ -284,6 +288,7 @@ async function main() {
 
   console.log(`Seeded ${stores.length} stores, ${n} products, ${customers.length} customers.`);
   console.log('Login: admin@pos.local / Password@123 (also manager.pp@, manager.sr@, cashier1@, cashier2@, cashier3@)');
+  console.log('Manager approval PINs: manager.pp 2580, manager.sr 1397, admin 9024');
 }
 
 main()

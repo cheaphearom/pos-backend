@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.module';
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
@@ -12,15 +13,18 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
+    private readonly audit: AuditService,
   ) {}
 
   async login(email: string, password: string) {
     const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
     // Same message for unknown email and wrong password, so attackers cannot discover accounts.
     if (!user || !user.isActive || !(await bcrypt.compare(password, user.passwordHash))) {
+      this.audit.add(null, { action: 'LOGIN_FAILED', entityType: 'user', entityId: user?.id ?? null, summary: `Failed login for ${email.toLowerCase().slice(0, 150)}${user && !user.isActive ? ' (inactive user)' : ''}` });
       throw new UnauthorizedException('Invalid email or password');
     }
     await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    this.audit.add({ kind: 'user', id: user.id, name: user.fullName, role: user.role, scopes: [], storeIds: [] }, { action: 'LOGIN', entityType: 'user', entityId: user.id, summary: `${user.fullName} logged in` });
     return this.issueTokens(user.id);
   }
 

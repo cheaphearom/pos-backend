@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -11,7 +12,10 @@ import { ProductsService } from './products.service';
 @ApiSecurity('api-key')
 @Controller('products')
 export class ProductsController {
-  constructor(private readonly products: ProductsService) {}
+  constructor(
+    private readonly products: ProductsService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Scopes('products:read')
   @Get()
@@ -57,7 +61,18 @@ export class ProductsController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Patch(':id')
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateProductDto) {
-    return this.products.update(id, dto);
+  async update(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateProductDto) {
+    const before = await this.products.get(p, id).catch(() => null);
+    const after = await this.products.update(id, dto);
+    if (before) {
+      const changes = (['sellPrice', 'costPrice', 'isActive', 'taxable'] as const)
+        .filter((k) => dto[k] !== undefined && String((before as any)[k]) !== String((after as any)[k]))
+        .map((k) => ({ field: k, from: String((before as any)[k]), to: String((after as any)[k]) }));
+      if (changes.length) {
+        this.audit.add(p, { action: 'PRODUCT_CHANGED', entityType: 'product', entityId: after.sku, details: changes,
+          summary: `${after.name}: ${changes.map((c) => `${c.field} ${c.from} → ${c.to}`).join(', ')}` });
+      }
+    }
+    return after;
   }
 }

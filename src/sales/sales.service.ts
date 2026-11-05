@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma, Role } from '@prisma/client';
+import { ApprovalsService, AuditService } from '../audit/audit.module';
 import { changePoints, pointsForAmount, valueOfPoints } from '../customers/loyalty';
 import { dateFilter } from '../common/date-range';
 import { pageArgs, toPage } from '../common/pagination';
@@ -17,7 +18,7 @@ import { CouponCheck, CouponsService } from '../coupons/coupons.module';
 import { VouchersService } from '../vouchers/vouchers.module';
 import { RecipesService } from '../recipes/recipes.module';
 import { REPORT_TIMEZONE } from '../config';
-import { CreateRefundDto, CreateSaleDto, SaleQueryDto } from './sales.dto';
+import { CreateRefundDto, CreateSaleDto, SaleQueryDto, VoidSaleDto } from './sales.dto';
 
 const D = (v: Prisma.Decimal.Value) => new Prisma.Decimal(v);
 const ZERO = D(0);
@@ -44,6 +45,8 @@ export class SalesService {
     private readonly coupons: CouponsService,
     private readonly vouchers: VouchersService,
     private readonly recipes: RecipesService,
+    private readonly audit: AuditService,
+    private readonly approvals: ApprovalsService,
   ) {}
 
   /**
@@ -76,6 +79,16 @@ export class SalesService {
     if (!store.isActive) throw new BadRequestException('Store is inactive');
 
     const { lines, usage, coupon, priced } = await this.buildPricing(dto, store, offlineAt);
+
+    // Cashier controls: a manual discount above the store's limit needs a manager PIN (promotions,
+    // coupons and points do not count: they follow their own rules).
+    const promoTotal = lines.reduce((t, l) => t.plus(l.promo), ZERO);
+    const manualDiscount = priced.discountTotal.minus(promoTotal).minus(coupon?.discount ?? 0);
+    const discountBase = priced.subtotal.minus(promoTotal);
+    const manualPercent = discountBase.gt(0) && manualDiscount.gt(0) ? manualDiscount.div(discountBase).mul(100).toDecimalPlaces(2).toNumber() : 0;
+    const discountLimit = Number(store.cashierMaxDiscountPercent);
+    const discountNeedsPin = p.kind === 'user' && p.role === Role.CASHIER && manualPercent > discountLimit;
+    if (discountNeedsPin && offlineAt) throw new ForbiddenException(`Discounts above ${discountLimit}% need a manager PIN and cannot be given offline`);
 
     // Loyalty redemption reduces the amount the customer has to pay.
     let pointsDiscount = ZERO;
@@ -113,6 +126,18 @@ export class SalesService {
           const [{ receipt_seq: seq }] = await tx.$queryRaw<{ receipt_seq: number }[]>`
             UPDATE stores SET receipt_seq = receipt_seq + 1 WHERE id = ${dto.storeId}::uuid RETURNING receipt_seq`;
           const receiptNo = `${store.code}-${String(seq).padStart(8, '0')}`;
+
+          // Manager approval for a big discount: checked and used up in this transaction.
+          const approvedBy = discountNeedsPin
+            ? await this.approvals.consume(tx, p, dto.approvalId, { storeId: dto.storeId, action: 'DISCOUNT', percent: manualPercent, usedFor: receiptNo })
+            : null;
+          if (manualPercent > 0) {
+            await this.audit.record(tx, p, {
+              action: approvedBy ? 'DISCOUNT_APPROVED' : 'DISCOUNT', storeId: dto.storeId, entityType: 'sale', entityId: receiptNo, approvedBy,
+              summary: `Manual discount ${manualPercent}% (${manualDiscount.toFixed(2)}) on ${receiptNo}${approvedBy ? `, approved by ${approvedBy.name}` : ''}`,
+              details: { percent: manualPercent, amount: manualDiscount.toFixed(2), limit: discountLimit, offline: !!offlineAt },
+            });
+          }
 
           // Café mode: daily queue number (A001, A002...) in the store's time zone.
           let queueNo: string | undefined;
@@ -412,7 +437,7 @@ export class SalesService {
   }
 
   /** Refund some or all items of a sale. Money, points and stock are reversed proportionally. */
-  async refund(p: Principal, saleId: string, dto: CreateRefundDto) {
+  async refund(p: Principal, saleId: string, dto: CreateRefundDto, opts: { voidReason?: string; approvedBy?: { id: string; name: string } | null } = {}) {
     const userId = userIdOf(p);
     let stockResults: MovementResult[] = [];
 
@@ -431,6 +456,14 @@ export class SalesService {
         if (!sale) throw new NotFoundException('Sale not found');
         assertStoreAccess(p, sale.storeId);
         if (sale.status === 'REFUNDED' || sale.status === 'VOIDED') throw new BadRequestException(`Sale is already ${sale.status}`);
+        const refundNo = `${sale.receiptNo}-R${sale.refunds.length + 1}`;
+
+        // Cashier controls: cashiers refund with a manager PIN (if the store says so). Voids are approved by void().
+        let approvedBy = opts.approvedBy ?? null;
+        if (!opts.voidReason && p.kind === 'user' && p.role === Role.CASHIER) {
+          const store = await tx.store.findUniqueOrThrow({ where: { id: sale.storeId }, select: { refundNeedsApproval: true } });
+          if (store.refundNeedsApproval) approvedBy = await this.approvals.consume(tx, p, dto.approvalId, { storeId: sale.storeId, action: 'REFUND', saleId, usedFor: refundNo });
+        }
 
         const itemsById = new Map(sale.items.map((i) => [i.id, i]));
         const requested = new Map<string, Prisma.Decimal>();
@@ -468,13 +501,13 @@ export class SalesService {
 
         const refund = await tx.refund.create({
           data: {
-            refundNo: `${sale.receiptNo}-R${sale.refunds.length + 1}`,
+            refundNo,
             saleId,
             userId,
             method: dto.method ?? 'CASH',
             amount,
             restock: dto.restock ?? true,
-            reason: dto.reason,
+            reason: opts.voidReason ? `Void: ${opts.voidReason}`.slice(0, 500) : dto.reason,
             items: { create: refundItems },
           },
         });
@@ -529,7 +562,14 @@ export class SalesService {
         await tx.refund.update({ where: { id: refund.id }, data: { pointsReturned, pointsReversed } });
         await tx.sale.update({
           where: { id: saleId },
-          data: { status: fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED', refundedTotal: { increment: amount } },
+          data: { status: opts.voidReason ? 'VOIDED' : fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED', refundedTotal: { increment: amount } },
+        });
+        await this.audit.record(tx, p, {
+          action: opts.voidReason ? 'VOID' : 'REFUND', storeId: sale.storeId, entityType: 'sale', entityId: sale.receiptNo, approvedBy,
+          summary: opts.voidReason
+            ? `Voided ${sale.receiptNo} (${amount.toFixed(2)}): ${opts.voidReason}${approvedBy ? `, approved by ${approvedBy.name}` : ''}`
+            : `Refund ${refundNo}: ${amount.toFixed(2)} by ${dto.method ?? 'CASH'}${dto.reason ? ` (${dto.reason})` : ''}${approvedBy ? `, approved by ${approvedBy.name}` : ''}`,
+          details: { refundNo, amount: amount.toFixed(2), method: dto.method ?? 'CASH', restock: dto.restock ?? true, items: refundItems.map((r) => ({ name: itemsById.get(r.saleItemId)!.name, quantity: r.quantity.toString() })) },
         });
 
         return tx.refund.findUniqueOrThrow({ where: { id: refund.id }, include: { items: true } });
@@ -539,5 +579,30 @@ export class SalesService {
 
     await this.webhooks.emit('sale.refunded', result);
     return result;
+  }
+
+  /**
+   * Void: cancel a whole sale from today (wrong order, customer changed their mind) and give everything
+   * back the way it was paid. Older or part-refunded sales use Refund.
+   */
+  async void(p: Principal, saleId: string, dto: VoidSaleDto) {
+    const sale = await this.prisma.sale.findUnique({ where: { id: saleId }, include: { items: true, payments: true, refunds: { select: { id: true } }, store: { select: { voidNeedsApproval: true } } } });
+    if (!sale) throw new NotFoundException('Sale not found');
+    assertStoreAccess(p, sale.storeId);
+    if (sale.status !== 'COMPLETED' || sale.refunds.length) throw new BadRequestException(`Only untouched sales can be voided (this one is ${sale.status.toLowerCase().replace('_', ' ')}); use Refund`);
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: REPORT_TIMEZONE }).format(new Date());
+    if (new Intl.DateTimeFormat('en-CA', { timeZone: REPORT_TIMEZONE }).format(sale.createdAt) !== today) throw new BadRequestException('Only sales from today can be voided; use Refund');
+    const methods = [...new Set(sale.payments.map((x) => x.method))];
+    if (methods.length > 1) throw new BadRequestException('This sale was paid in more than one way; use Refund');
+    let approvedBy: { id: string; name: string } | null = null;
+    if (p.kind === 'user' && p.role === Role.CASHIER && sale.store.voidNeedsApproval) {
+      approvedBy = await this.prisma.$transaction((tx) => this.approvals.consume(tx, p, dto.approvalId, { storeId: sale.storeId, action: 'VOID', saleId, usedFor: sale.receiptNo }));
+    }
+    await this.refund(
+      p, saleId,
+      { items: sale.items.map((i) => ({ saleItemId: i.id, quantity: Number(i.quantity) })), method: methods[0] ?? 'CASH', restock: dto.restock ?? true },
+      { voidReason: dto.reason, approvedBy },
+    );
+    return this.get(p, saleId);
   }
 }

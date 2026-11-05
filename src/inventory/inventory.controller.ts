@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -11,7 +12,10 @@ import { InventoryService } from './inventory.service';
 @ApiSecurity('api-key')
 @Controller('inventory')
 export class InventoryController {
-  constructor(private readonly inventory: InventoryService) {}
+  constructor(
+    private readonly inventory: InventoryService,
+    private readonly audit: AuditService,
+  ) {}
 
   /** Stock levels of a store. Use lowStock=true for the reorder list. */
   @Scopes('inventory:read')
@@ -31,8 +35,13 @@ export class InventoryController {
   @Roles(Role.STORE_MANAGER)
   @Scopes('inventory:write')
   @Post('adjustments')
-  adjust(@CurrentPrincipal() p: Principal, @Body() dto: AdjustStockDto) {
-    return this.inventory.adjust(p, dto);
+  async adjust(@CurrentPrincipal() p: Principal, @Body() dto: AdjustStockDto) {
+    const r = await this.inventory.adjust(p, dto);
+    this.audit.add(p, {
+      action: dto.type === 'PURCHASE' ? 'STOCK_RECEIVED' : 'STOCK_ADJUSTED', storeId: dto.storeId, entityType: 'stock', entityId: dto.reference ?? null,
+      summary: `${dto.type === 'PURCHASE' ? 'Stock received' : 'Stock adjusted'}: ${dto.items.length} item(s)${dto.note ? ` (${dto.note})` : ''}`, details: dto,
+    });
+    return r;
   }
 
   /** Set reorder level and store-specific price. */

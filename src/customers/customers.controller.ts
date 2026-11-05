@@ -1,7 +1,9 @@
+import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
-import { Roles, Scopes } from '../common/decorators';
+import { CurrentPrincipal, Roles, Scopes } from '../common/decorators';
+import { Principal } from '../common/principal';
 import { PageQueryDto } from '../common/pagination';
 import { AdjustPointsDto, CreateCustomerDto, CustomerQueryDto, UpdateCustomerDto } from './customers.dto';
 import { CustomersService } from './customers.service';
@@ -11,7 +13,10 @@ import { CustomersService } from './customers.service';
 @ApiSecurity('api-key')
 @Controller('customers')
 export class CustomersController {
-  constructor(private readonly customers: CustomersService) {}
+  constructor(
+    private readonly customers: CustomersService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Scopes('customers:read')
   @Get()
@@ -66,7 +71,10 @@ export class CustomersController {
   /** Manually add or remove points (complaints, promotions). */
   @Roles(Role.STORE_MANAGER)
   @Post(':id/points/adjust')
-  adjust(@Param('id', ParseUUIDPipe) id: string, @Body() dto: AdjustPointsDto) {
-    return this.customers.adjustPoints(id, dto);
+  async adjust(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: AdjustPointsDto) {
+    const r = await this.customers.adjustPoints(id, dto);
+    const c = await this.customers.get(id);
+    this.audit.add(p, { action: 'POINTS_ADJUSTED', entityType: 'customer', entityId: c.code, summary: `${c.name}: ${dto.points > 0 ? '+' : ''}${dto.points} points (${dto.reason})`, details: dto });
+    return r;
   }
 }

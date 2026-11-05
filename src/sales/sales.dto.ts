@@ -1,6 +1,6 @@
 import { OrderType, PaymentMethod, SaleStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, Matches, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, Matches, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { DateRangeQueryDto } from '../common/date-range';
 
 export class SaleItemDto {
@@ -40,6 +40,10 @@ export class PaymentDto {
 }
 
 export class CreateSaleDto {
+  /** Manager approval for a discount above the cashier limit (from POST /approvals) */
+  @IsOptional() @IsUUID()
+  approvalId?: string;
+
   @IsUUID()
   storeId: string;
 
@@ -112,7 +116,24 @@ export class RefundItemDto {
   quantity: number;
 }
 
+export class VoidSaleDto {
+  @IsString() @MinLength(3) @MaxLength(200)
+  reason: string;
+
+  /** Put the items back into stock (default yes) */
+  @IsOptional() @IsBoolean()
+  restock?: boolean;
+
+  /** From POST /approvals (cashiers, when the store needs a manager PIN) */
+  @IsOptional() @IsUUID()
+  approvalId?: string;
+}
+
 export class CreateRefundDto {
+  /** From POST /approvals (cashiers, when the store needs a manager PIN) */
+  @IsOptional() @IsUUID()
+  approvalId?: string;
+
   @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => RefundItemDto)
   items: RefundItemDto[];
 

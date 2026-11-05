@@ -98,6 +98,12 @@ model Store {
   hasKitchen Boolean @default(false) @map("has_kitchen")
   /// Customers can order on their phone (pickup, or by scanning a table QR code)
   onlineOrdering Boolean @default(false) @map("online_ordering")
+
+  /// Cashier controls: biggest manual discount a cashier may give without a manager PIN (% of the sale)
+  cashierMaxDiscountPercent Decimal @default(10) @map("cashier_max_discount_percent") @db.Decimal(5, 2)
+  /// Cashiers need a manager PIN to refund / to void a sale
+  refundNeedsApproval Boolean @default(true) @map("refund_needs_approval")
+  voidNeedsApproval   Boolean @default(true) @map("void_needs_approval")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -126,6 +132,8 @@ model User {
   role         Role     @default(CASHIER)
   isActive     Boolean  @default(true) @map("is_active")
   lastLoginAt  DateTime? @map("last_login_at")
+  /// Managers: PIN typed on a cashier's POS to approve a big discount, refund or void
+  approvalPinHash String? @map("approval_pin_hash")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -1155,4 +1163,57 @@ model WasteEntry {
 
   @@index([storeId, createdAt])
   @@map("waste_entries")
+}
+
+// ─────────────────────────── Cashier controls ───────────────────────────
+
+enum ApprovalAction {
+  DISCOUNT
+  REFUND
+  VOID
+}
+
+/// A manager typed their PIN on a cashier's POS. Used once, within a few minutes, for one action.
+model Approval {
+  id            String         @id @default(uuid()) @db.Uuid
+  storeId       String         @map("store_id") @db.Uuid
+  action        ApprovalAction
+  /// DISCOUNT: highest discount % allowed by this approval
+  maxPercent    Decimal?       @map("max_percent") @db.Decimal(5, 2)
+  /// REFUND / VOID: the sale it is for
+  saleId        String?        @map("sale_id") @db.Uuid
+  managerId     String         @map("manager_id") @db.Uuid
+  requestedById String         @map("requested_by_id") @db.Uuid
+  reason        String?        @db.VarChar(200)
+  expiresAt     DateTime       @map("expires_at")
+  usedAt        DateTime?      @map("used_at")
+  usedFor       String?        @map("used_for") @db.VarChar(64)
+  createdAt     DateTime       @default(now()) @map("created_at")
+
+  @@index([storeId, createdAt])
+  @@map("approvals")
+}
+
+/// Who did what: discounts over the limit, refunds, voids, PIN approvals and failures,
+/// price and stock changes, points and wallet adjustments, user and store changes, logins.
+model AuditLog {
+  id             BigInt   @id @default(autoincrement())
+  createdAt      DateTime @default(now()) @map("created_at")
+  storeId        String?  @map("store_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  userName       String?  @map("user_name") @db.VarChar(150)
+  action         String   @db.VarChar(50)
+  entityType     String?  @map("entity_type") @db.VarChar(30)
+  entityId       String?  @map("entity_id") @db.VarChar(64)
+  summary        String   @db.VarChar(300)
+  details        Json?
+  approvedById   String?  @map("approved_by_id") @db.Uuid
+  approvedByName String?  @map("approved_by_name") @db.VarChar(150)
+  ip             String?  @db.VarChar(64)
+
+  @@index([createdAt])
+  @@index([storeId, createdAt])
+  @@index([action, createdAt])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
 }

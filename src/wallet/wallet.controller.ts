@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -12,7 +13,10 @@ import { WalletService } from './wallet.service';
 @ApiSecurity('api-key')
 @Controller('wallet/cards')
 export class WalletController {
-  constructor(private readonly wallet: WalletService) {}
+  constructor(
+    private readonly wallet: WalletService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Roles(Role.STORE_MANAGER)
   @Scopes('wallet:read')
@@ -64,20 +68,26 @@ export class WalletController {
 
   @Roles(Role.STORE_MANAGER)
   @Post(':id/adjust')
-  adjust(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: AdjustBalanceDto) {
-    return this.wallet.adjust(p, id, dto);
+  async adjust(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: AdjustBalanceDto) {
+    const r: any = await this.wallet.adjust(p, id, dto);
+    this.audit.add(p, { action: 'WALLET_ADJUSTED', entityType: 'wallet', entityId: r?.cardNumber ?? id, summary: `Wallet ${r?.cardNumber ?? id}: ${dto.amount > 0 ? '+' : ''}${dto.amount} (${dto.reason})`, details: dto });
+    return r;
   }
 
   @Roles(Role.STORE_MANAGER)
   @Post(':id/block')
-  block(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ReasonDto) {
-    return this.wallet.setStatus(id, 'BLOCKED', dto.reason);
+  async block(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReasonDto) {
+    const r = await this.wallet.setStatus(id, 'BLOCKED', dto.reason);
+    this.audit.add(p, { action: 'WALLET_BLOCKED', entityType: 'wallet', entityId: r.cardNumber, summary: `Wallet ${r.cardNumber} blocked${dto.reason ? `: ${dto.reason}` : ''}` });
+    return r;
   }
 
   @Roles(Role.STORE_MANAGER)
   @Post(':id/unblock')
-  unblock(@Param('id', ParseUUIDPipe) id: string) {
-    return this.wallet.setStatus(id, 'ACTIVE');
+  async unblock(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    const r = await this.wallet.setStatus(id, 'ACTIVE');
+    this.audit.add(p, { action: 'WALLET_UNBLOCKED', entityType: 'wallet', entityId: r.cardNumber, summary: `Wallet ${r.cardNumber} unblocked` });
+    return r;
   }
 
   @Post(':id/pin')

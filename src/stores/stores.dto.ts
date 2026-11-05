@@ -50,6 +50,18 @@ export class CreateStoreDto {
   /** Customers can order on their phone (pickup or table QR) */
   @IsOptional() @IsBoolean()
   onlineOrdering?: boolean;
+
+  /** Biggest manual discount (% of the sale) a cashier may give without a manager PIN */
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100)
+  cashierMaxDiscountPercent?: number;
+
+  /** Cashier refunds need a manager PIN */
+  @IsOptional() @IsBoolean()
+  refundNeedsApproval?: boolean;
+
+  /** Cashier voids need a manager PIN */
+  @IsOptional() @IsBoolean()
+  voidNeedsApproval?: boolean;
 }
 
 export class UpdateStoreDto extends PartialType(CreateStoreDto) {

@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseBoolPipe, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -11,7 +12,10 @@ import { StoresService } from './stores.service';
 @ApiSecurity('api-key')
 @Controller('stores')
 export class StoresController {
-  constructor(private readonly stores: StoresService) {}
+  constructor(
+    private readonly stores: StoresService,
+    private readonly audit: AuditService,
+  ) {}
 
   /** Stores the caller can access. */
   @Scopes('stores:read')
@@ -41,7 +45,9 @@ export class StoresController {
 
   @Roles(Role.STORE_MANAGER)
   @Patch(':id')
-  update(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateStoreDto) {
-    return this.stores.update(p, id, dto);
+  async update(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateStoreDto) {
+    const s = await this.stores.update(p, id, dto);
+    this.audit.add(p, { action: 'STORE_CHANGED', storeId: id, entityType: 'store', entityId: s.code, summary: `Store ${s.code}: ${Object.keys(dto).join(', ')}`, details: dto });
+    return s;
   }
 }

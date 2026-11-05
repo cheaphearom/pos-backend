@@ -523,5 +523,70 @@ ok((await call('GET', '/production/report', { token: cashier })).s === 403, 'cas
 const recipesB = (await call('GET', '/recipes', { token: mgr })).j.find((x) => x.sku === 'BK-001');
 ok(recipesB?.madeInHouse && recipesB.recipeCost === 0.305, 'recipes page: croissant cost per piece from the batch recipe');
 
+// ── Cashier controls: discount limit, manager PIN, refunds, voids, audit log
+{
+const sellWith = (token, extra = {}) => call('POST', '/sales', { token, body: { storeId: pp01.id, items: [{ productId: water.id, quantity: 10 }], payments: [{ method: 'CASH', amount: 10 }], ...extra } });
+ok((await sellWith(cashier, { discountPercent: 10 })).s === 201, 'cashier gives 10% (the limit) without a PIN');
+const overLimit = await sellWith(cashier, { discountPercent: 20 });
+ok(overLimit.s === 403 && /manager PIN/.test(overLimit.j.message), 'cashier 20% discount without approval -> 403 "' + overLimit.j.message + '"');
+ok((await sellWith(cashier, { items: [{ productId: water.id, quantity: 10, discount: 1 }] })).s === 403, 'a line discount over the limit also needs a PIN (1.00 of 3.50)');
+const denied = await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'DISCOUNT', percent: 20, pin: '0000' } });
+ok(denied.s === 400 && /Wrong manager PIN \(4 tries left\)/.test(denied.j.message), 'wrong PIN refused: ' + denied.j.message);
+ok((await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'DISCOUNT', percent: 20, pin: '1397' } })).s === 400, 'a manager of another store cannot approve here');
+const ap = await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'DISCOUNT', percent: 20, pin: '2580' } });
+ok(ap.s === 200 && ap.j.approvalId && ap.j.manager.includes('Sokha'), 'manager PIN approves 20%: ' + ap.j.manager);
+const approvedSale = await sellWith(cashier, { discountPercent: 20, approvalId: ap.j.approvalId });
+ok(approvedSale.s === 201 && approvedSale.j.discountTotal === '0.7', 'sale with the approved 20% discount');
+ok((await sellWith(cashier, { discountPercent: 20, approvalId: ap.j.approvalId })).s === 403, 'an approval works only once');
+const ap15 = (await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'DISCOUNT', percent: 15, pin: '2580' } })).j;
+ok((await sellWith(cashier, { discountPercent: 20, approvalId: ap15.approvalId })).s === 403, 'a 15% approval does not cover 20%');
+ok((await sellWith(mgr, { discountPercent: 30 })).s === 201, 'managers have no discount limit');
+// Refund
+const rs = (await sellWith(cashier)).j;
+const rBody = { items: [{ saleItemId: rs.items[0].id, quantity: 2 }], method: 'CASH' };
+const rNo = await call('POST', `/sales/${rs.id}/refunds`, { token: cashier, body: rBody });
+ok(rNo.s === 403, 'cashier refund without a manager PIN -> 403');
+const apR = (await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'REFUND', saleId: rs.id, pin: '2580', reason: 'broken bottle' } })).j;
+const apOther = (await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'REFUND', saleId: approvedSale.j.id, pin: '2580' } })).j;
+ok((await call('POST', `/sales/${rs.id}/refunds`, { token: cashier, body: { ...rBody, approvalId: apOther.approvalId } })).s === 403, 'an approval for another sale does not work');
+const rOk = await call('POST', `/sales/${rs.id}/refunds`, { token: cashier, body: { ...rBody, approvalId: apR.approvalId, reason: 'broken bottle' } });
+ok(rOk.s === 201 && rOk.j.amount === '0.77', 'cashier refund with the manager PIN: ' + rOk.j.amount);
+await call('PATCH', `/stores/${pp01.id}`, { token: admin, body: { refundNeedsApproval: false } });
+ok((await call('POST', `/sales/${rs.id}/refunds`, { token: cashier, body: { items: [{ saleItemId: rs.items[0].id, quantity: 1 }] } })).s === 201, 'store setting off: cashier refunds without a PIN');
+await call('PATCH', `/stores/${pp01.id}`, { token: admin, body: { refundNeedsApproval: true } });
+// Void
+const vs = (await sellWith(cashier)).j;
+const stockBeforeVoid = (await call('GET', `/products/lookup?code=885000000001&storeId=${pp01.id}`, { token: cashier })).j.stock;
+ok((await call('POST', `/sales/${vs.id}/void`, { token: cashier, body: { reason: 'wrong order' } })).s === 403, 'cashier void without a PIN -> 403');
+const apV = (await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'VOID', saleId: vs.id, pin: '2580' } })).j;
+const vOk = await call('POST', `/sales/${vs.id}/void`, { token: cashier, body: { reason: 'wrong order', approvalId: apV.approvalId } });
+ok(vOk.s === 200 && vOk.j.status === 'VOIDED' && vOk.j.refundedTotal === vOk.j.amountDue, 'sale voided: status VOIDED, all money back');
+ok(Number((await call('GET', `/products/lookup?code=885000000001&storeId=${pp01.id}`, { token: cashier })).j.stock) === Number(stockBeforeVoid) + 10, 'void put the 10 waters back in stock');
+ok((await call('POST', `/sales/${vs.id}/void`, { token: mgr, body: { reason: 'again' } })).s === 400, 'a voided sale cannot be voided again');
+ok((await call('POST', `/sales/${rs.id}/void`, { token: mgr, body: { reason: 'nope' } })).s === 400, 'a part-refunded sale cannot be voided (use refund)');
+// PIN setup rules
+ok((await call('POST', '/auth/approval-pin', { token: cashier, body: { currentPassword: 'Password@123', pin: '4826' } })).s === 403, 'cashiers have no approval PIN');
+ok((await call('POST', '/auth/approval-pin', { token: mgr, body: { currentPassword: 'Password@123', pin: '1111' } })).s === 400, 'too easy PIN refused');
+ok(/Another manager/.test((await call('POST', '/auth/approval-pin', { token: admin, body: { currentPassword: 'Password@123', pin: '2580' } })).j.message), 'each PIN belongs to one manager');
+ok((await call('POST', '/auth/approval-pin', { token: mgr, body: { currentPassword: 'wrong', pin: '4826' } })).s === 400, 'setting a PIN needs the password');
+// Audit log
+await call('PATCH', `/products/${water.id}`, { token: admin, body: { sellPrice: 0.4 } });
+await call('PATCH', `/products/${water.id}`, { token: admin, body: { sellPrice: 0.35 } });
+const audit = (await call('GET', `/audit?storeId=${pp01.id}&limit=200`, { token: mgr })).j.data;
+const has = (a, f = () => true) => audit.some((x) => x.action === a && f(x));
+ok(has('DISCOUNT_APPROVED', (x) => x.approvedByName?.includes('Sokha') && x.entityId === approvedSale.j.receiptNo), 'audit: approved discount with receipt and manager');
+ok(has('DISCOUNT', (x) => x.details.percent === 10), 'audit: 10% discount within the limit');
+ok(has('APPROVAL_DENIED') && has('APPROVAL_GRANTED'), 'audit: wrong and right PINs');
+ok(has('REFUND', (x) => x.approvedByName && x.summary.includes('broken bottle')) && has('VOID', (x) => x.summary.includes('wrong order')), 'audit: refund and void with reasons');
+ok(has('STORE_CHANGED'), 'audit: store setting change');
+const allAudit = (await call('GET', '/audit?limit=200', { token: admin })).j.data;
+ok(allAudit.some((x) => x.action === 'LOGIN_FAILED') && allAudit.some((x) => x.action === 'PRODUCT_CHANGED' && x.summary.includes('sellPrice 0.35 → 0.4')), 'audit: failed login, price change');
+ok((await call('GET', '/audit', { token: cashier })).s === 403, 'cashiers cannot read the audit log');
+// Lockout after 5 wrong PINs in 15 minutes (this test already had 2)
+for (let i = 0; i < 3; i++) await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'DISCOUNT', percent: 50, pin: '0000' } });
+const locked = await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'DISCOUNT', percent: 50, pin: '2580' } });
+ok(locked.s === 403 && /Too many wrong PINs/.test(locked.j.message), 'after 5 wrong PINs even the right one waits: ' + locked.j.message);
+}
+
 await new Promise((r) => setTimeout(r, 2500));
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

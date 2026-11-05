@@ -1,3 +1,4 @@
+import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -11,7 +12,10 @@ import { UsersService } from './users.service';
 @Roles(Role.STORE_MANAGER)
 @Controller('users')
 export class UsersController {
-  constructor(private readonly users: UsersService) {}
+  constructor(
+    private readonly users: UsersService,
+    private readonly audit: AuditService,
+  ) {}
 
   @Get()
   list(@CurrentPrincipal() p: Principal, @Query() q: UserQueryDto) {
@@ -24,12 +28,20 @@ export class UsersController {
   }
 
   @Post()
-  create(@CurrentPrincipal() p: Principal, @Body() dto: CreateUserDto) {
-    return this.users.create(p, dto);
+  async create(@CurrentPrincipal() p: Principal, @Body() dto: CreateUserDto) {
+    const u: any = await this.users.create(p, dto);
+    this.audit.add(p, { action: 'USER_CREATED', entityType: 'user', entityId: u.id, summary: `User ${u.email} created as ${u.role}`, details: { role: u.role, storeIds: dto.storeIds } });
+    return u;
   }
 
   @Patch(':id')
-  update(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateUserDto) {
-    return this.users.update(p, id, dto);
+  async update(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateUserDto) {
+    const u: any = await this.users.update(p, id, dto);
+    const { password, ...safe } = dto as any;
+    this.audit.add(p, {
+      action: 'USER_CHANGED', entityType: 'user', entityId: id,
+      summary: `User ${u.email}: ${Object.keys(safe).join(', ') || 'no fields'}${password ? ', password reset' : ''}`, details: safe,
+    });
+    return u;
   }
 }

@@ -25,6 +25,7 @@ import { LookupModule } from './lookup.controller';
 import { ModifiersModule } from './modifiers/modifiers.module';
 import { KitchenModule } from './kitchen/kitchen.module';
 import { RecipesModule } from './recipes/recipes.module';
+import { AuditModule } from './audit/audit.module';
 import { MemberModule } from './member/member.module';
 import { OnlineModule } from './online/online.module';
 import { ProductionModule } from './production/production.module';
@@ -38,6 +39,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
 @Module({
   imports: [
     PrismaModule,
+    AuditModule,
     JwtModule.register({ global: true }),
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: config.rateLimitPerMinute }]),
     BullModule.forRoot({ connection: { url: config.redisUrl } }),
