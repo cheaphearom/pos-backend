@@ -18,6 +18,11 @@ export class StoresService {
     });
   }
 
+  /** Names of all active stores (e.g. to choose a transfer destination). No details. */
+  directory() {
+    return this.prisma.store.findMany({ where: { isActive: true }, select: { id: true, code: true, name: true }, orderBy: { code: 'asc' } });
+  }
+
   async get(p: Principal, id: string) {
     assertStoreAccess(p, id);
     const store = await this.prisma.store.findUniqueOrThrow({ where: { id }, omit: { receiptSeq: true } });

@@ -130,8 +130,13 @@ export class ReportsService {
 
   async payments(p: Principal, q: ReportQueryDto) {
     const { where, from, to } = this.scope(p, q);
+    // Cash tendered includes the change handed back, so subtract it to get the money actually kept.
     const rows = await this.prisma.$queryRaw<any[]>`
-      SELECT pm.method, count(*)::int AS count, sum(pm.amount) AS amount
+      WITH change AS (
+        SELECT coalesce(sum(s.change_due), 0) AS total FROM sales s WHERE ${where} AND s.status <> 'VOIDED'
+      )
+      SELECT pm.method, count(*)::int AS count,
+             sum(pm.amount) - CASE WHEN pm.method = 'CASH' THEN (SELECT total FROM change) ELSE 0 END AS amount
         FROM payments pm JOIN sales s ON s.id = pm.sale_id
        WHERE ${where} AND s.status <> 'VOIDED'
        GROUP BY pm.method ORDER BY amount DESC`;

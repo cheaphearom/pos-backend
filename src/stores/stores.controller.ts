@@ -20,6 +20,13 @@ export class StoresController {
     return this.stores.list(p, all);
   }
 
+  /** id, code and name of every active store. */
+  @Scopes('stores:read')
+  @Get('directory')
+  directory() {
+    return this.stores.directory();
+  }
+
   @Scopes('stores:read')
   @Get(':id')
   get(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {

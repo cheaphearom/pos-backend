@@ -2,11 +2,12 @@ import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
-import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
 import { AuthGuard } from './common/auth.guard';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
+import { ClientThrottlerGuard } from './common/throttler.guard';
 import { config } from './config';
 import { CustomersModule } from './customers/customers.module';
 import { HealthController } from './health.controller';
@@ -42,7 +43,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
   ],
   controllers: [HealthController],
   providers: [
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: ClientThrottlerGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_FILTER, useClass: PrismaExceptionFilter },
   ],
