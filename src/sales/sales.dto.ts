@@ -1,0 +1,110 @@
+import { PaymentMethod, SaleStatus } from '@prisma/client';
+import { Type } from 'class-transformer';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { DateRangeQueryDto } from '../common/date-range';
+
+export class SaleItemDto {
+  @IsUUID()
+  productId: string;
+
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001)
+  quantity: number;
+
+  /** Discount amount for this line */
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0)
+  discount?: number;
+}
+
+export class PaymentDto {
+  @IsEnum(PaymentMethod)
+  method: PaymentMethod;
+
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01)
+  amount: number;
+
+  /** Card approval code, KHQR transaction id, etc. */
+  @IsOptional() @IsString() @MaxLength(100)
+  reference?: string;
+}
+
+export class CreateSaleDto {
+  @IsUUID()
+  storeId: string;
+
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => SaleItemDto)
+  items: SaleItemDto[];
+
+  @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => PaymentDto)
+  payments: PaymentDto[];
+
+  /** Loyalty member */
+  @IsOptional() @IsUUID()
+  customerId?: string;
+
+  /** Discount amount on the whole sale */
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0)
+  discount?: number;
+
+  /** Discount percent on the whole sale (0-100) */
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100)
+  discountPercent?: number;
+
+  /** Loyalty points to use as payment */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  redeemPoints?: number;
+
+  /**
+   * Unique id created by the client (e.g. a UUID). Sending the same sale twice
+   * (offline sync, network retry) returns the first sale instead of charging twice.
+   */
+  @IsOptional() @IsString() @MaxLength(64)
+  clientRef?: string;
+
+  /** Sales channel; integrations can send e.g. ONLINE */
+  @IsOptional() @IsString() @MaxLength(20)
+  channel?: string;
+
+  @IsOptional() @IsString() @MaxLength(500)
+  note?: string;
+}
+
+export class RefundItemDto {
+  @IsUUID()
+  saleItemId: string;
+
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001)
+  quantity: number;
+}
+
+export class CreateRefundDto {
+  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => RefundItemDto)
+  items: RefundItemDto[];
+
+  @IsOptional() @IsEnum(PaymentMethod)
+  method?: PaymentMethod;
+
+  /** Put items back into stock (false for damaged goods) */
+  @IsOptional() @IsBoolean()
+  restock?: boolean;
+
+  @IsOptional() @IsString() @MaxLength(500)
+  reason?: string;
+}
+
+export class SaleQueryDto extends DateRangeQueryDto {
+  @IsOptional() @IsEnum(SaleStatus)
+  status?: SaleStatus;
+
+  @IsOptional() @IsUUID()
+  customerId?: string;
+
+  @IsOptional() @IsUUID()
+  cashierId?: string;
+
+  @IsOptional() @IsUUID()
+  shiftId?: string;
+
+  /** Receipt number (partial match) */
+  @IsOptional() @IsString()
+  search?: string;
+}

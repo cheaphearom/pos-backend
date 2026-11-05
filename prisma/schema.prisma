@@ -1,0 +1,491 @@
+// Multi-store POS database schema.
+// Money uses Decimal(14,2); quantities use Decimal(14,3) so items sold by weight work.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum Role {
+  SUPER_ADMIN // all stores, all settings
+  STORE_MANAGER // manages assigned stores
+  CASHIER // sells in assigned stores
+}
+
+enum StockMovementType {
+  PURCHASE // goods received from supplier
+  SALE
+  REFUND // goods returned by customer
+  ADJUSTMENT // manual count correction, damage, loss
+  TRANSFER_OUT
+  TRANSFER_IN
+}
+
+enum TransferStatus {
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+}
+
+enum SaleStatus {
+  COMPLETED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  VOIDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  KHQR
+  BANK_TRANSFER
+  E_WALLET
+  OTHER
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum LoyaltyTxType {
+  EARN
+  REDEEM
+  REVERSE // points taken back on refund
+  RETURN // redeemed points given back on refund
+  ADJUST // manual change by staff
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+// ──────────────────────── Stores & Users ────────────────────────
+
+model Store {
+  id         String   @id @default(uuid()) @db.Uuid
+  code       String   @unique @db.VarChar(20) // short code used in receipt numbers, e.g. "PP01"
+  name       String   @db.VarChar(150)
+  address    String?
+  phone      String?  @db.VarChar(30)
+  currency   String   @default("USD") @db.VarChar(3)
+  taxRate    Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 4) // 0.1000 = 10%
+  receiptSeq Int      @default(0) @map("receipt_seq") // last used receipt number
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  users          StoreUser[]
+  inventory      Inventory[]
+  stockMovements StockMovement[]
+  sales          Sale[]
+  shifts         Shift[]
+  transfersOut   StockTransfer[] @relation("TransferFrom")
+  transfersIn    StockTransfer[] @relation("TransferTo")
+  apiKeys        ApiKey[]
+
+  @@map("stores")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique @db.VarChar(150)
+  passwordHash String   @map("password_hash")
+  fullName     String   @map("full_name") @db.VarChar(150)
+  phone        String?  @db.VarChar(30)
+  role         Role     @default(CASHIER)
+  isActive     Boolean  @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  stores        StoreUser[]
+  refreshTokens RefreshToken[]
+  sales         Sale[]
+  shifts        Shift[]
+  refunds       Refund[]
+
+  @@map("users")
+}
+
+/// Which stores a manager / cashier can work in. Super admins see all stores.
+model StoreUser {
+  storeId   String   @map("store_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  store Store @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([storeId, userId])
+  @@index([userId])
+  @@map("store_users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────── Catalogue & Stock ───────────────────────
+
+model Category {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(100)
+  parentId  String?  @map("parent_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  @@unique([parentId, name])
+  @@map("categories")
+}
+
+/// One shared catalogue for all stores. Store-specific price and stock live in Inventory.
+model Product {
+  id          String   @id @default(uuid()) @db.Uuid
+  sku         String   @unique @db.VarChar(50)
+  barcode     String?  @unique @db.VarChar(64)
+  name        String   @db.VarChar(200)
+  description String?
+  categoryId  String?  @map("category_id") @db.Uuid
+  unit        String   @default("pcs") @db.VarChar(20)
+  costPrice   Decimal  @default(0) @map("cost_price") @db.Decimal(14, 2)
+  sellPrice   Decimal  @map("sell_price") @db.Decimal(14, 2)
+  taxable     Boolean  @default(true)
+  trackStock  Boolean  @default(true) @map("track_stock") // false for services
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  category       Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  inventory      Inventory[]
+  stockMovements StockMovement[]
+  saleItems      SaleItem[]
+  transferItems  StockTransferItem[]
+
+  @@index([categoryId])
+  @@index([name])
+  @@map("products")
+}
+
+/// Stock level and optional price override of one product in one store.
+model Inventory {
+  id            String   @id @default(uuid()) @db.Uuid
+  storeId       String   @map("store_id") @db.Uuid
+  productId     String   @map("product_id") @db.Uuid
+  quantity      Decimal  @default(0) @db.Decimal(14, 3)
+  reorderLevel  Decimal  @default(0) @map("reorder_level") @db.Decimal(14, 3)
+  priceOverride Decimal? @map("price_override") @db.Decimal(14, 2)
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([storeId, productId])
+  @@index([productId])
+  @@map("inventory")
+}
+
+/// Every stock change ever made (append-only ledger). Grows large -> BigInt id.
+model StockMovement {
+  id            BigInt            @id @default(autoincrement())
+  storeId       String            @map("store_id") @db.Uuid
+  productId     String            @map("product_id") @db.Uuid
+  type          StockMovementType
+  quantity      Decimal           @db.Decimal(14, 3) // + in, - out
+  balanceAfter  Decimal           @map("balance_after") @db.Decimal(14, 3)
+  referenceType String?           @map("reference_type") @db.VarChar(30) // SALE, REFUND, TRANSFER...
+  referenceId   String?           @map("reference_id") @db.VarChar(64)
+  note          String?
+  userId        String?           @map("user_id") @db.Uuid
+  createdAt     DateTime          @default(now()) @map("created_at")
+
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([storeId, productId, createdAt])
+  @@index([storeId, createdAt])
+  @@map("stock_movements")
+}
+
+model StockTransfer {
+  id          String         @id @default(uuid()) @db.Uuid
+  transferNo  String         @unique @map("transfer_no") @db.VarChar(40)
+  fromStoreId String         @map("from_store_id") @db.Uuid
+  toStoreId   String         @map("to_store_id") @db.Uuid
+  status      TransferStatus @default(IN_TRANSIT)
+  note        String?
+  createdById String?        @map("created_by_id") @db.Uuid
+  receivedById String?       @map("received_by_id") @db.Uuid
+  createdAt   DateTime       @default(now()) @map("created_at")
+  receivedAt  DateTime?      @map("received_at")
+
+  fromStore Store               @relation("TransferFrom", fields: [fromStoreId], references: [id])
+  toStore   Store               @relation("TransferTo", fields: [toStoreId], references: [id])
+  items     StockTransferItem[]
+
+  @@index([fromStoreId, createdAt])
+  @@index([toStoreId, createdAt])
+  @@map("stock_transfers")
+}
+
+model StockTransferItem {
+  id         String  @id @default(uuid()) @db.Uuid
+  transferId String  @map("transfer_id") @db.Uuid
+  productId  String  @map("product_id") @db.Uuid
+  quantity   Decimal @db.Decimal(14, 3)
+
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product  Product       @relation(fields: [productId], references: [id])
+
+  @@map("stock_transfer_items")
+}
+
+// ─────────────────────── Customers & Loyalty ───────────────────────
+
+model Customer {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique @db.VarChar(30) // member card number
+  name        String   @db.VarChar(150)
+  phone       String?  @unique @db.VarChar(30)
+  email       String?  @db.VarChar(150)
+  points      Int      @default(0)
+  totalSpent  Decimal  @default(0) @map("total_spent") @db.Decimal(14, 2)
+  visitCount  Int      @default(0) @map("visit_count")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  sales        Sale[]
+  loyaltyTxns  LoyaltyTransaction[]
+
+  @@index([name])
+  @@map("customers")
+}
+
+model LoyaltyTransaction {
+  id           BigInt        @id @default(autoincrement())
+  customerId   String        @map("customer_id") @db.Uuid
+  type         LoyaltyTxType
+  points       Int // + or -
+  balanceAfter Int           @map("balance_after")
+  saleId       String?       @map("sale_id") @db.Uuid
+  note         String?
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+  @@map("loyalty_transactions")
+}
+
+// ─────────────────────────── Sales ───────────────────────────
+
+model Shift {
+  id           String      @id @default(uuid()) @db.Uuid
+  storeId      String      @map("store_id") @db.Uuid
+  userId       String      @map("user_id") @db.Uuid
+  status       ShiftStatus @default(OPEN)
+  openingCash  Decimal     @map("opening_cash") @db.Decimal(14, 2)
+  closingCash  Decimal?    @map("closing_cash") @db.Decimal(14, 2) // counted by cashier
+  expectedCash Decimal?    @map("expected_cash") @db.Decimal(14, 2) // calculated by system
+  note         String?
+  openedAt     DateTime    @default(now()) @map("opened_at")
+  closedAt     DateTime?   @map("closed_at")
+
+  store Store  @relation(fields: [storeId], references: [id])
+  user  User   @relation(fields: [userId], references: [id])
+  sales Sale[]
+
+  @@index([storeId, openedAt])
+  @@index([userId, status])
+  @@map("shifts")
+}
+
+model Sale {
+  id             String     @id @default(uuid()) @db.Uuid
+  receiptNo      String     @unique @map("receipt_no") @db.VarChar(40)
+  clientRef      String?    @unique @map("client_ref") @db.VarChar(64) // idempotency key (offline sync / integrations)
+  storeId        String     @map("store_id") @db.Uuid
+  shiftId        String?    @map("shift_id") @db.Uuid
+  cashierId      String?    @map("cashier_id") @db.Uuid // null when created by an integration
+  customerId     String?    @map("customer_id") @db.Uuid
+  channel        String     @default("POS") @db.VarChar(20) // POS, ONLINE, API...
+  status         SaleStatus @default(COMPLETED)
+  subtotal       Decimal    @db.Decimal(14, 2) // before discounts & tax
+  discountTotal  Decimal    @default(0) @map("discount_total") @db.Decimal(14, 2)
+  taxTotal       Decimal    @default(0) @map("tax_total") @db.Decimal(14, 2)
+  total          Decimal    @db.Decimal(14, 2) // subtotal - discount + tax
+  pointsRedeemed Int        @default(0) @map("points_redeemed")
+  pointsDiscount Decimal    @default(0) @map("points_discount") @db.Decimal(14, 2)
+  amountDue      Decimal    @map("amount_due") @db.Decimal(14, 2) // total - pointsDiscount
+  amountPaid     Decimal    @map("amount_paid") @db.Decimal(14, 2)
+  changeDue      Decimal    @default(0) @map("change_due") @db.Decimal(14, 2)
+  pointsEarned   Int        @default(0) @map("points_earned")
+  refundedTotal  Decimal    @default(0) @map("refunded_total") @db.Decimal(14, 2)
+  note           String?
+  createdAt      DateTime   @default(now()) @map("created_at")
+
+  store    Store     @relation(fields: [storeId], references: [id])
+  shift    Shift?    @relation(fields: [shiftId], references: [id])
+  cashier  User?     @relation(fields: [cashierId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+  items    SaleItem[]
+  payments Payment[]
+  refunds  Refund[]
+
+  @@index([storeId, createdAt])
+  @@index([customerId, createdAt])
+  @@index([shiftId])
+  @@index([createdAt])
+  @@map("sales")
+}
+
+model SaleItem {
+  id           String  @id @default(uuid()) @db.Uuid
+  saleId       String  @map("sale_id") @db.Uuid
+  lineNo       Int     @map("line_no") // order on the receipt
+  productId    String  @map("product_id") @db.Uuid
+  sku          String  @db.VarChar(50) // snapshot at time of sale
+  name         String  @db.VarChar(200)
+  quantity     Decimal @db.Decimal(14, 3)
+  unitPrice    Decimal @map("unit_price") @db.Decimal(14, 2)
+  costPrice    Decimal @map("cost_price") @db.Decimal(14, 2)
+  discount     Decimal @default(0) @db.Decimal(14, 2) // line + share of sale discount
+  taxRate      Decimal @map("tax_rate") @db.Decimal(5, 4)
+  netAmount    Decimal @map("net_amount") @db.Decimal(14, 2) // qty*price - discount
+  taxAmount    Decimal @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal    Decimal @map("line_total") @db.Decimal(14, 2) // net + tax
+  refundedQty  Decimal @default(0) @map("refunded_qty") @db.Decimal(14, 3)
+
+  sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product     Product      @relation(fields: [productId], references: [id])
+  refundItems RefundItem[]
+
+  @@index([saleId])
+  @@index([productId])
+  @@map("sale_items")
+}
+
+model Payment {
+  id        String        @id @default(uuid()) @db.Uuid
+  saleId    String        @map("sale_id") @db.Uuid
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(14, 2)
+  reference String?       @db.VarChar(100) // card approval code, KHQR transaction id...
+  createdAt DateTime      @default(now()) @map("created_at")
+
+  sale Sale @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([saleId])
+  @@map("payments")
+}
+
+model Refund {
+  id             String        @id @default(uuid()) @db.Uuid
+  refundNo       String        @unique @map("refund_no") @db.VarChar(40)
+  saleId         String        @map("sale_id") @db.Uuid
+  userId         String?       @map("user_id") @db.Uuid
+  method         PaymentMethod @default(CASH)
+  amount         Decimal       @db.Decimal(14, 2) // money given back
+  pointsReturned Int           @default(0) @map("points_returned")
+  pointsReversed Int           @default(0) @map("points_reversed")
+  restock        Boolean       @default(true)
+  reason         String?
+  createdAt      DateTime      @default(now()) @map("created_at")
+
+  sale  Sale         @relation(fields: [saleId], references: [id])
+  user  User?        @relation(fields: [userId], references: [id])
+  items RefundItem[]
+
+  @@index([saleId])
+  @@index([createdAt])
+  @@map("refunds")
+}
+
+model RefundItem {
+  id         String  @id @default(uuid()) @db.Uuid
+  refundId   String  @map("refund_id") @db.Uuid
+  saleItemId String  @map("sale_item_id") @db.Uuid
+  quantity   Decimal @db.Decimal(14, 3)
+  amount     Decimal @db.Decimal(14, 2)
+
+  refund   Refund   @relation(fields: [refundId], references: [id], onDelete: Cascade)
+  saleItem SaleItem @relation(fields: [saleItemId], references: [id])
+
+  @@map("refund_items")
+}
+
+// ──────────────────────── Integrations ────────────────────────
+
+/// Key for other systems (accounting, e-commerce, ERP). Only the SHA-256 hash is stored.
+model ApiKey {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(100)
+  prefix      String    @db.VarChar(16) // first chars, shown in UI to identify the key
+  keyHash     String    @unique @map("key_hash")
+  scopes      String[]
+  storeId     String?   @map("store_id") @db.Uuid // null = all stores
+  lastUsedAt  DateTime? @map("last_used_at")
+  expiresAt   DateTime? @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  store Store? @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@map("api_keys")
+}
+
+/// Other systems register a URL to be told about events (sale.created, stock.low ...).
+model WebhookEndpoint {
+  id        String   @id @default(uuid()) @db.Uuid
+  url       String
+  secret    String // used to sign payloads (HMAC-SHA256)
+  events    String[]
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  deliveries WebhookDelivery[]
+
+  @@map("webhook_endpoints")
+}
+
+model WebhookDelivery {
+  id           BigInt                @id @default(autoincrement())
+  endpointId   String                @map("endpoint_id") @db.Uuid
+  event        String                @db.VarChar(50)
+  payload      Json
+  status       WebhookDeliveryStatus @default(PENDING)
+  attempts     Int                   @default(0)
+  responseCode Int?                  @map("response_code")
+  lastError    String?               @map("last_error")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  deliveredAt  DateTime?             @map("delivered_at")
+
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id], onDelete: Cascade)
+
+  @@index([endpointId, createdAt])
+  @@map("webhook_deliveries")
+}
