@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsNumber, IsOptional, IsString, IsUUID, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsNumber, IsOptional, IsString, IsUrl, IsUUID, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
 import { PageQueryDto } from '../common/pagination';
 
 const money = { maxDecimalPlaces: 2 };
@@ -36,6 +36,14 @@ export class CreateProductDto {
   /** false for services that have no stock */
   @IsOptional() @IsBoolean()
   trackStock?: boolean;
+
+  /** Picture shown on the POS tile and online menu */
+  @IsOptional() @ValidateIf((_, v) => v !== null && v !== '') @IsUrl({ require_tld: false })
+  imageUrl?: string | null;
+
+  /** Drink options (Size, Sugar...) offered for this product, in order */
+  @IsOptional() @IsArray() @IsUUID('all', { each: true })
+  modifierGroupIds?: string[];
 }
 
 export class UpdateProductDto extends PartialType(CreateProductDto) {

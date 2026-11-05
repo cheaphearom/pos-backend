@@ -314,5 +314,34 @@ const cvr = await call('GET', '/reports/coupons-vouchers', { token: mgr });
 ok(cvr.s === 200 && cvr.j.coupons.some((c) => c.name === 'Save 10' && c.uses === 3) && cvr.j.vouchers.soldInPeriod.value >= 5, `report: coupons ${cvr.j.coupons.length} campaign(s), vouchers sold $${cvr.j.vouchers.soldInPeriod.value}, outstanding $${cvr.j.vouchers.outstandingSold.value}`);
 await call('POST', `/shifts/${shift3.j.id}/close`, { token: cashier, body: { closingCash: 5 } });
 
+// ── Café: drink options, queue numbers, barista screen, pickup board ──
+const groups = (await call('GET', '/modifiers', { token: cashier })).j;
+const opt = (g, o) => groups.find((x) => x.name === g).options.find((x) => x.name === o).id;
+ok(groups.length >= 5 && groups.find((g) => g.name === 'Size').minSelect === 1, `drink option groups: ${groups.map((g) => g.name).join(', ')}`);
+const latte = (await call('GET', `/products/lookup?code=CF-002&storeId=${pp01.id}`, { token: cashier })).j;
+const latteSale = (modifiers, extra = {}) => call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, items: [{ productId: latte.id, quantity: 1, modifiers, note: 'hot please' }], payments: [{ method: 'CASH', amount: 20 }], ...extra } });
+ok((await latteSale([opt('Sugar', '50%')])).j.message === 'Choose Size for Latte', 'required option missing -> "Choose Size for Latte"');
+ok((await latteSale([opt('Size', 'Large'), opt('Sugar', '50%'), opt('Ice', 'No ice')])).s === 400, 'option that does not belong to the drink rejected');
+ok((await latteSale([opt('Size', 'Large'), opt('Size', 'Small'), opt('Sugar', '50%')])).s === 400, 'two sizes rejected (choose one)');
+// Latte 2.30 + Large 1.00 + Oat 0.60 + Extra shot 0.50 = 4.40 + 10% tax = 4.84
+const ls = await latteSale([opt('Size', 'Large'), opt('Sugar', '50%'), opt('Milk', 'Oat milk'), opt('Extras', 'Extra shot')], { orderType: 'DINE_IN', tableNo: '7' });
+ok(ls.s === 201 && ls.j.items[0].unitPrice === '4.4' && ls.j.total === '4.84', `Latte L + oat + extra shot priced on the server: ${ls.j.items?.[0]?.unitPrice} each, total ${ls.j.total}`);
+ok(ls.j.queueNo?.startsWith('A') && ls.j.kitchenStatus === 'NEW' && ls.j.orderType === 'DINE_IN' && ls.j.tableNo === '7', `café order: queue ${ls.j.queueNo}, dine-in table 7, sent to kitchen`);
+ok(ls.j.items[0].modifiers.map((m) => m.option).join(', ') === 'Large, 50%, Oat milk, Extra shot' && ls.j.items[0].note === 'hot please', 'options and note saved on the line');
+const ls2 = await latteSale([opt('Size', 'Small'), opt('Sugar', '0%')]);
+ok(Number(ls2.j.queueNo.slice(1)) === Number(ls.j.queueNo.slice(1)) + 1, `queue numbers count up: ${ls.j.queueNo} -> ${ls2.j.queueNo}`);
+const kq1 = (await call('GET', `/kitchen/orders?storeId=${pp01.id}`, { token: cashier })).j;
+ok(kq1.orders.some((o) => o.id === ls.j.id && o.items[0].modifiers.length === 4), `barista screen lists ${kq1.orders.length} open order(s)`);
+ok((await call('POST', `/kitchen/orders/${ls.j.id}/status`, { token: cashier, body: { status: 'COMPLETED' } })).s === 400, 'cannot jump from NEW to COMPLETED');
+await call('POST', `/kitchen/orders/${ls.j.id}/status`, { token: cashier, body: { status: 'PREPARING' } });
+const ready = await call('POST', `/kitchen/orders/${ls.j.id}/status`, { token: cashier, body: { status: 'READY' } });
+const board = await fetch(B + '/public/stores/PP01/board').then((r) => r.json());
+ok(ready.j.kitchenStatus === 'READY' && board.ready.includes(ls.j.queueNo) && board.preparing.includes(ls2.j.queueNo), `pickup board (no login): ready ${board.ready.join(',')} / preparing ${board.preparing.join(',')}`);
+await call('POST', `/kitchen/orders/${ls.j.id}/status`, { token: cashier, body: { status: 'COMPLETED' } });
+ok(!(await fetch(B + '/public/stores/PP01/board').then((r) => r.json())).ready.includes(ls.j.queueNo), 'completed order leaves the board');
+ok((await fetch(B + '/public/stores/PP02/board')).status === 404, 'board only for café stores');
+const shopSale = await call('POST', '/sales', { token: admin, body: { storeId: pp02.id, items: [{ productId: water.id, quantity: 1 }], payments: [{ method: 'CASH', amount: 1 }] } });
+ok(shopSale.j.queueNo === null && shopSale.j.kitchenStatus === 'NONE' && shopSale.j.orderType === 'RETAIL', 'normal shop (not café mode): no queue number, not sent to kitchen');
+
 await new Promise((r) => setTimeout(r, 2500));
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

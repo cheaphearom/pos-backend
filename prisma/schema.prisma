@@ -89,6 +89,9 @@ model Store {
   khqrCity         String? @map("khqr_city") @db.VarChar(15)
   khqrMerchantId   String? @map("khqr_merchant_id") @db.VarChar(32) // set for merchant accounts (tag 30)
   khqrBank         String? @map("khqr_bank") @db.VarChar(32) // acquiring bank name
+
+  /// Café mode: orders get a queue number and go to the barista / kitchen screen
+  hasKitchen Boolean @default(false) @map("has_kitchen")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -186,10 +189,12 @@ model Product {
   taxable     Boolean  @default(true)
   trackStock  Boolean  @default(true) @map("track_stock") // false for services
   isActive    Boolean  @default(true) @map("is_active")
+  imageUrl    String?  @map("image_url")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   category       Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  modifierGroups ProductModifierGroup[]
   inventory      Inventory[]
   stockMovements StockMovement[]
   saleItems      SaleItem[]
@@ -345,6 +350,13 @@ model Sale {
   cashierId      String?    @map("cashier_id") @db.Uuid // null when created by an integration
   customerId     String?    @map("customer_id") @db.Uuid
   channel        String     @default("POS") @db.VarChar(20) // POS, ONLINE, API...
+  orderType      OrderType  @default(RETAIL) @map("order_type")
+  tableNo        String?    @map("table_no") @db.VarChar(20)
+  queueNo        String?    @map("queue_no") @db.VarChar(10) // A001.. per store per day (café mode)
+  kitchenStatus  KitchenStatus @default(NONE) @map("kitchen_status")
+  kitchenStartedAt DateTime? @map("kitchen_started_at")
+  readyAt        DateTime?  @map("ready_at")
+  completedAt    DateTime?  @map("completed_at")
   status         SaleStatus @default(COMPLETED)
   subtotal       Decimal    @db.Decimal(14, 2) // before discounts & tax
   discountTotal  Decimal    @default(0) @map("discount_total") @db.Decimal(14, 2)
@@ -375,6 +387,7 @@ model Sale {
   @@index([customerId, createdAt])
   @@index([shiftId])
   @@index([createdAt])
+  @@index([storeId, kitchenStatus])
   @@map("sales")
 }
 
@@ -394,6 +407,8 @@ model SaleItem {
   taxAmount    Decimal @map("tax_amount") @db.Decimal(14, 2)
   lineTotal    Decimal @map("line_total") @db.Decimal(14, 2) // net + tax
   refundedQty  Decimal @default(0) @map("refunded_qty") @db.Decimal(14, 3)
+  modifiers     Json?    // snapshot: [{ group, option, price }]
+  note          String?  @db.VarChar(200) // e.g. "less sweet", "hot please"
   promotionId   String?  @map("promotion_id") @db.Uuid
   promoDiscount Decimal  @default(0) @map("promo_discount") @db.Decimal(14, 2) // part of `discount` that came from the promotion
 
@@ -878,4 +893,78 @@ model VoucherUse {
   @@index([voucherId])
   @@index([saleId])
   @@map("voucher_uses")
+}
+
+// ──────────────────────── Café: drink options & kitchen ────────────────────────
+
+enum OrderType {
+  RETAIL // normal shop sale
+  TAKEAWAY
+  DINE_IN
+  PICKUP // ordered ahead online
+  DELIVERY
+}
+
+enum KitchenStatus {
+  NONE // not a kitchen order
+  NEW
+  PREPARING
+  READY
+  COMPLETED
+  CANCELLED
+}
+
+/// A set of choices for drinks/food, e.g. "Size" (S/M/L) or "Sugar level".
+model ModifierGroup {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(60)
+  minSelect Int      @default(0) @map("min_select") // 1 = required
+  maxSelect Int      @default(1) @map("max_select") // 1 = choose one
+  sortOrder Int      @default(0) @map("sort_order")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  options  ModifierOption[]
+  products ProductModifierGroup[]
+
+  @@map("modifier_groups")
+}
+
+model ModifierOption {
+  id         String   @id @default(uuid()) @db.Uuid
+  groupId    String   @map("group_id") @db.Uuid
+  name       String   @db.VarChar(60)
+  priceDelta Decimal  @default(0) @map("price_delta") @db.Decimal(14, 2) // added to the item price
+  isDefault  Boolean  @default(false) @map("is_default")
+  sortOrder  Int      @default(0) @map("sort_order")
+  isActive   Boolean  @default(true) @map("is_active")
+
+  group ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@index([groupId])
+  @@map("modifier_options")
+}
+
+model ProductModifierGroup {
+  productId String @map("product_id") @db.Uuid
+  groupId   String @map("group_id") @db.Uuid
+  sortOrder Int    @default(0) @map("sort_order")
+
+  product Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  group   ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@id([productId, groupId])
+  @@index([groupId])
+  @@map("product_modifier_groups")
+}
+
+/// Daily queue numbers per store (A001, A002, ...).
+model StoreDayCounter {
+  storeId String   @map("store_id") @db.Uuid
+  day     DateTime @db.Date
+  seq     Int      @default(0)
+
+  @@id([storeId, day])
+  @@map("store_day_counters")
 }

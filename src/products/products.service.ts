@@ -28,6 +28,7 @@ export class ProductsService {
         orderBy: { name: 'asc' },
         include: {
           category: { select: { id: true, name: true } },
+          modifierGroups: { orderBy: { sortOrder: 'asc' }, select: { groupId: true } },
           ...(q.storeId && { inventory: { where: { storeId: q.storeId } } }),
         },
         ...pageArgs(q),
@@ -68,16 +69,18 @@ export class ProductsService {
         : { isActive: true },
       select: {
         id: true, sku: true, barcode: true, name: true, unit: true, sellPrice: true, taxable: true,
-        trackStock: true, isActive: true, categoryId: true,
+        trackStock: true, isActive: true, categoryId: true, imageUrl: true,
         inventory: { where: { storeId }, select: { quantity: true, priceOverride: true } },
+        modifierGroups: { orderBy: { sortOrder: 'asc' }, select: { groupId: true } },
       },
       orderBy: { name: 'asc' },
     });
     return {
       serverTime,
       full: !sinceDate,
-      products: rows.map(({ inventory, sellPrice, ...r }) => ({
+      products: rows.map(({ inventory, sellPrice, modifierGroups, ...r }) => ({
         ...r,
+        modifierGroupIds: modifierGroups.map((m) => m.groupId),
         price: inventory[0]?.priceOverride ?? sellPrice,
         stock: inventory[0]?.quantity ?? '0',
       })),
@@ -95,18 +98,27 @@ export class ProductsService {
     return withStorePrice(product, storeId);
   }
 
-  create(dto: CreateProductDto) {
-    return this.prisma.product.create({ data: dto });
+  create({ modifierGroupIds, ...dto }: CreateProductDto) {
+    return this.prisma.product.create({
+      data: { ...dto, ...(modifierGroupIds && { modifierGroups: { create: modifierGroupIds.map((groupId, i) => ({ groupId, sortOrder: i })) } }) },
+    });
   }
 
-  update(id: string, dto: UpdateProductDto) {
-    return this.prisma.product.update({ where: { id }, data: dto });
+  update(id: string, { modifierGroupIds, ...dto }: UpdateProductDto) {
+    return this.prisma.$transaction(async (tx) => {
+      if (modifierGroupIds) {
+        await tx.productModifierGroup.deleteMany({ where: { productId: id } });
+        await tx.productModifierGroup.createMany({ data: modifierGroupIds.map((groupId, i) => ({ productId: id, groupId, sortOrder: i })) });
+      }
+      // updatedAt changes so offline POS catalogues pick up the new options.
+      return tx.product.update({ where: { id }, data: { ...dto, updatedAt: new Date() } });
+    });
   }
 
   /** Create or update many products by SKU in one transaction (for imports and integrations). */
   async bulkUpsert(products: CreateProductDto[]) {
     const results = await this.prisma.$transaction(
-      products.map((dto) =>
+      products.map(({ modifierGroupIds: _ignored, ...dto }) =>
         this.prisma.product.upsert({ where: { sku: dto.sku }, create: dto, update: dto, select: { id: true, sku: true } }),
       ),
     );

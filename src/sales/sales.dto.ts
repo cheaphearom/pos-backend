@@ -1,4 +1,4 @@
-import { PaymentMethod, SaleStatus } from '@prisma/client';
+import { OrderType, PaymentMethod, SaleStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, Matches, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { DateRangeQueryDto } from '../common/date-range';
@@ -13,6 +13,14 @@ export class SaleItemDto {
   /** Discount amount for this line */
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0)
   discount?: number;
+
+  /** Chosen drink options (modifier option ids), e.g. size L + 50% sugar */
+  @IsOptional() @IsArray() @ArrayMaxSize(30) @IsUUID('all', { each: true })
+  modifiers?: string[];
+
+  /** Note for the barista / kitchen */
+  @IsOptional() @IsString() @MaxLength(200)
+  note?: string;
 }
 
 export class PaymentDto {
@@ -67,6 +75,14 @@ export class CreateSaleDto {
    */
   @IsOptional() @IsString() @MaxLength(64)
   clientRef?: string;
+
+  /** Café: TAKEAWAY, DINE_IN, PICKUP, DELIVERY (default RETAIL) */
+  @IsOptional() @IsEnum(OrderType)
+  orderType?: OrderType;
+
+  /** Table number for dine-in */
+  @IsOptional() @IsString() @MaxLength(20)
+  tableNo?: string;
 
   /** Sales channel; integrations can send e.g. ONLINE */
   @IsOptional() @IsString() @MaxLength(20)

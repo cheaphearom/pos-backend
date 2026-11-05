@@ -82,9 +82,35 @@ export class SalesService {
       if (!prod.isActive) throw new BadRequestException(`Product ${prod.name} is not for sale`);
     }
 
+    // Drink options: check them against the product's option groups and add their prices.
+    const optionIds = [...new Set(dto.items.flatMap((i) => i.modifiers ?? []))];
+    const options = optionIds.length
+      ? await this.prisma.modifierOption.findMany({ where: { id: { in: optionIds } }, include: { group: true } })
+      : [];
+    const optionById = new Map(options.map((o) => [o.id, o]));
+    const groupsByProduct = new Map<string, { groupId: string; group: { name: string; minSelect: number; maxSelect: number; isActive: boolean } }[]>();
+    const links = await this.prisma.productModifierGroup.findMany({ where: { productId: { in: productIds } }, include: { group: true } });
+    for (const l of links) groupsByProduct.set(l.productId, [...(groupsByProduct.get(l.productId) ?? []), l]);
+
     const baseLines = dto.items.map((i) => {
       const prod = byId.get(i.productId)!;
-      return { item: i, prod, unitPrice: prod.inventory[0]?.priceOverride ?? prod.sellPrice };
+      const allowed = (groupsByProduct.get(prod.id) ?? []).filter((g) => g.group.isActive);
+      const chosen = (i.modifiers ?? []).map((id) => {
+        const o = optionById.get(id);
+        if (!o || !o.isActive) throw new BadRequestException(`Option ${id} is not available`);
+        if (!allowed.some((g) => g.groupId === o.groupId)) throw new BadRequestException(`"${o.name}" is not an option of ${prod.name}`);
+        return o;
+      });
+      for (const g of allowed) {
+        const n = chosen.filter((o) => o.groupId === g.groupId).length;
+        if (n < g.group.minSelect) throw new BadRequestException(`Choose ${g.group.name} for ${prod.name}`);
+        if (n > g.group.maxSelect) throw new BadRequestException(`Choose at most ${g.group.maxSelect} for ${g.group.name} (${prod.name})`);
+      }
+      const extra = chosen.reduce((t, o) => t.plus(o.priceDelta), D(0));
+      const unitPrice = (prod.inventory[0]?.priceOverride ?? prod.sellPrice).plus(extra);
+      if (unitPrice.isNegative()) throw new BadRequestException(`Options make ${prod.name} cost less than zero`);
+      const modifiers = chosen.map((o) => ({ id: o.id, group: o.group.name, option: o.name, price: o.priceDelta.toString() }));
+      return { item: i, prod, unitPrice, modifiers };
     });
 
     // Promotions: same engine as the POS, evaluated at the time of sale (offline sales: when they happened).
@@ -160,6 +186,16 @@ export class SalesService {
             UPDATE stores SET receipt_seq = receipt_seq + 1 WHERE id = ${dto.storeId}::uuid RETURNING receipt_seq`;
           const receiptNo = `${store.code}-${String(seq).padStart(8, '0')}`;
 
+          // Café mode: daily queue number (A001, A002...) in the store's time zone.
+          let queueNo: string | undefined;
+          if (store.hasKitchen) {
+            const day = new Intl.DateTimeFormat('en-CA', { timeZone: REPORT_TIMEZONE }).format(offlineAt ?? new Date());
+            const [{ seq: q }] = await tx.$queryRaw<{ seq: number }[]>`
+              INSERT INTO store_day_counters (store_id, day, seq) VALUES (${dto.storeId}::uuid, ${day}::date, 1)
+              ON CONFLICT (store_id, day) DO UPDATE SET seq = store_day_counters.seq + 1 RETURNING seq`;
+            queueNo = 'A' + String(q).padStart(3, '0');
+          }
+
           // 2. Save the sale.
           const created = await tx.sale.create({
             data: {
@@ -170,6 +206,10 @@ export class SalesService {
               cashierId: userId,
               customerId: dto.customerId,
               channel: dto.channel ?? (p.kind === 'api_key' ? 'API' : 'POS'),
+              orderType: dto.orderType ?? (store.hasKitchen ? 'TAKEAWAY' : 'RETAIL'),
+              tableNo: dto.tableNo,
+              queueNo,
+              kitchenStatus: store.hasKitchen ? 'NEW' : 'NONE',
               subtotal: priced.subtotal,
               discountTotal: priced.discountTotal,
               taxTotal: priced.taxTotal,
@@ -187,6 +227,8 @@ export class SalesService {
               items: {
                 create: lines.map((l, i) => ({
                   lineNo: i + 1,
+                  modifiers: l.modifiers.length ? l.modifiers : undefined,
+                  note: l.item.note,
                   productId: l.prod.id,
                   sku: l.prod.sku,
                   name: l.prod.name,

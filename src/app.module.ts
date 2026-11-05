@@ -22,6 +22,8 @@ import { WalletModule } from './wallet/wallet.module';
 import { CouponsModule } from './coupons/coupons.module';
 import { VouchersModule } from './vouchers/vouchers.module';
 import { LookupModule } from './lookup.controller';
+import { ModifiersModule } from './modifiers/modifiers.module';
+import { KitchenModule } from './kitchen/kitchen.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 import { ShiftsModule } from './shifts/shifts.module';
@@ -54,6 +56,8 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     CouponsModule,
     VouchersModule,
     LookupModule,
+    ModifiersModule,
+    KitchenModule,
   ],
   controllers: [HealthController],
   providers: [

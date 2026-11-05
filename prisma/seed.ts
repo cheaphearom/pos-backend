@@ -171,6 +171,44 @@ async function main() {
     console.log('Coupons: WELCOME10 (members, 10%, min $5), LUCKY-AAAA1111 ($1 off). Vouchers: GVDEMO10A (sell first), GVFREE2A (free $2).');
   }
 
+  // Café (demo): drinks with options, bakery items; PP01 runs in café mode (queue numbers + barista screen)
+  if (!(await prisma.modifierGroup.count())) {
+    const group = (name: string, minSelect: number, maxSelect: number, sortOrder: number, options: [string, number, boolean?][]) =>
+      prisma.modifierGroup.create({
+        data: { name, minSelect, maxSelect, sortOrder, options: { create: options.map(([n, priceDelta, isDefault], i) => ({ name: n, priceDelta, isDefault: !!isDefault, sortOrder: i })) } },
+      });
+    const size = await group('Size', 1, 1, 1, [['Small', 0], ['Medium', 0.5, true], ['Large', 1]]);
+    const sugar = await group('Sugar', 1, 1, 2, [['0%', 0], ['25%', 0], ['50%', 0], ['75%', 0], ['100%', 0, true]]);
+    const ice = await group('Ice', 1, 1, 3, [['Normal ice', 0, true], ['Less ice', 0], ['No ice', 0]]);
+    const milk = await group('Milk', 0, 1, 4, [['Fresh milk', 0, true], ['Oat milk', 0.6], ['Soy milk', 0.4]]);
+    const extra = await group('Extras', 0, 3, 5, [['Extra shot', 0.5], ['Whipped cream', 0.3], ['Caramel syrup', 0.3]]);
+
+    const coffee = await prisma.category.create({ data: { name: 'Coffee & Tea' } });
+    const bakery = await prisma.category.create({ data: { name: 'Bakery' } });
+    const drinks: [string, string, number, string[]][] = [
+      ['CF-001', 'Americano', 1.8, [size.id, sugar.id, extra.id]],
+      ['CF-002', 'Latte', 2.3, [size.id, sugar.id, milk.id, extra.id]],
+      ['CF-003', 'Iced Latte', 2.5, [size.id, sugar.id, ice.id, milk.id, extra.id]],
+      ['CF-004', 'Cappuccino', 2.3, [size.id, sugar.id, milk.id, extra.id]],
+      ['CF-005', 'Iced Matcha Latte', 2.8, [size.id, sugar.id, ice.id, milk.id]],
+      ['CF-006', 'Iced Lemon Tea', 1.9, [size.id, sugar.id, ice.id]],
+    ];
+    for (const [sku, name, price, groups] of drinks) {
+      await prisma.product.create({
+        data: {
+          sku, name, sellPrice: price, costPrice: Math.round(price * 0.3 * 100) / 100, unit: 'cup', trackStock: false, categoryId: coffee.id,
+          modifierGroups: { create: groups.map((groupId, i) => ({ groupId, sortOrder: i })) },
+        },
+      });
+    }
+    for (const [sku, name, price] of [['BK-001', 'Butter Croissant', 1.5], ['BK-002', 'Chocolate Muffin', 1.8]] as const) {
+      const p = await prisma.product.create({ data: { sku, name, sellPrice: price, costPrice: price * 0.4, unit: 'pcs', categoryId: bakery.id, taxable: true } });
+      for (const st of stores) await prisma.inventory.create({ data: { storeId: st.id, productId: p.id, quantity: 30, reorderLevel: 5 } });
+    }
+    await prisma.store.update({ where: { code: 'PP01' }, data: { hasKitchen: true } });
+    console.log('Café: PP01 is in café mode. Drinks CF-001..CF-006 with Size/Sugar/Ice/Milk/Extras; bakery BK-001, BK-002.');
+  }
+
   console.log(`Seeded ${stores.length} stores, ${n} products, ${customers.length} customers.`);
   console.log('Login: admin@pos.local / Password@123 (also manager.pp@, manager.sr@, cashier1@, cashier2@, cashier3@)');
 }

@@ -42,6 +42,10 @@ export class CreateStoreDto {
   /** Acquiring bank name */
   @IsOptional() @IsString() @MaxLength(32)
   khqrBank?: string | null;
+
+  /** Café mode: queue numbers, order types and the barista / kitchen screen */
+  @IsOptional() @IsBoolean()
+  hasKitchen?: boolean;
 }
 
 export class UpdateStoreDto extends PartialType(CreateStoreDto) {
