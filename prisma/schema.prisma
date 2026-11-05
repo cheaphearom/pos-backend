@@ -26,6 +26,9 @@ enum StockMovementType {
   TRANSFER_OUT
   TRANSFER_IN
   RECIPE // ingredients used up by drinks / dishes sold
+  PRODUCTION // finished pieces made here (bakery batch)
+  PRODUCTION_USE // ingredients used to make a batch
+  WASTE // written off: expired, unsold, damaged
 }
 
 enum TransferStatus {
@@ -108,6 +111,8 @@ model Store {
   apiKeys        ApiKey[]
   purchaseOrders PurchaseOrder[]
   khqrPayments   KhqrPayment[]
+  productionBatches ProductionBatch[]
+  wasteEntries      WasteEntry[]
 
   @@map("stores")
 }
@@ -197,6 +202,13 @@ model Product {
   isIngredient Boolean @default(false) @map("is_ingredient")
   /// Shown on the online ordering menu
   onlineAvailable Boolean @default(false) @map("online_available")
+  /// Bakery / kitchen item made here in batches. Its recipe is for ONE batch and is used when the batch is made,
+  /// not when it is sold (sales take finished pieces from stock).
+  madeInHouse    Boolean  @default(false) @map("made_in_house")
+  /// Pieces one recipe batch makes (e.g. 24 croissants)
+  batchYield     Decimal  @default(1) @map("batch_yield") @db.Decimal(10, 3)
+  /// Fresh for this many hours after baking (unsold pieces after that are written off)
+  shelfLifeHours Int?     @map("shelf_life_hours")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -209,6 +221,8 @@ model Product {
   saleItems      SaleItem[]
   transferItems  StockTransferItem[]
   poItems        PurchaseOrderItem[]
+  productionBatches ProductionBatch[]
+  wasteEntries      WasteEntry[]
 
   @@index([categoryId])
   @@index([name])
@@ -1078,4 +1092,67 @@ model MemberOtp {
 
   @@index([phone, createdAt])
   @@map("member_otps")
+}
+
+// ─────────────────────────── Bakery production ───────────────────────────
+
+enum ProductionStatus {
+  PLANNED
+  DONE
+  CANCELLED
+}
+
+/// One batch made in a store: ingredients out, finished pieces in, cost per piece.
+model ProductionBatch {
+  id            String           @id @default(uuid()) @db.Uuid
+  batchNo       String           @unique @map("batch_no") @db.VarChar(40)
+  storeId       String           @map("store_id") @db.Uuid
+  productId     String           @map("product_id") @db.Uuid
+  status        ProductionStatus @default(PLANNED)
+  plannedQty    Decimal          @map("planned_qty") @db.Decimal(14, 3)
+  producedQty   Decimal?         @map("produced_qty") @db.Decimal(14, 3)
+  unitCost      Decimal?         @map("unit_cost") @db.Decimal(14, 6)
+  totalCost     Decimal?         @map("total_cost") @db.Decimal(14, 2)
+  /// What was used, for the batch sheet: [{ ingredientId, name, unit, quantity, cost }]
+  ingredients   Json?
+  expiresAt     DateTime?        @map("expires_at")
+  note          String?          @db.VarChar(200)
+  createdById   String?          @map("created_by_id") @db.Uuid
+  completedById String?          @map("completed_by_id") @db.Uuid
+  createdAt     DateTime         @default(now()) @map("created_at")
+  completedAt   DateTime?        @map("completed_at")
+
+  store   Store   @relation(fields: [storeId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([storeId, createdAt])
+  @@index([storeId, productId, completedAt])
+  @@map("production_batches")
+}
+
+enum WasteReason {
+  EXPIRED
+  UNSOLD
+  DAMAGED
+  QUALITY
+  OTHER
+}
+
+/// Stock written off, with its cost at the time (for the waste report).
+model WasteEntry {
+  id        String      @id @default(uuid()) @db.Uuid
+  storeId   String      @map("store_id") @db.Uuid
+  productId String      @map("product_id") @db.Uuid
+  quantity  Decimal     @db.Decimal(14, 3)
+  unitCost  Decimal     @map("unit_cost") @db.Decimal(14, 6)
+  reason    WasteReason
+  note      String?     @db.VarChar(200)
+  userId    String?     @map("user_id") @db.Uuid
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  store   Store   @relation(fields: [storeId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([storeId, createdAt])
+  @@map("waste_entries")
 }

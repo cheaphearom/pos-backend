@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
-import { config } from '../config';
+import { config, REPORT_TIMEZONE } from '../config';
 import { PrismaService } from '../prisma/prisma.service';
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -57,7 +57,7 @@ export class AuthService {
         stores: { select: { store: { select: { id: true, code: true, name: true } } } },
       },
     });
-    return { ...user, stores: user.stores.map((s) => s.store) };
+    return { ...user, stores: user.stores.map((s) => s.store), timezone: REPORT_TIMEZONE };
   }
 
   async changePassword(userId: string, current: string, next: string) {

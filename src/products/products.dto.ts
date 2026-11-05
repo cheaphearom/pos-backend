@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsString, IsUrl, IsUUID, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUrl, IsUUID, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
 import { PageQueryDto } from '../common/pagination';
 
 const money = { maxDecimalPlaces: 2 };
@@ -45,6 +45,18 @@ export class CreateProductDto {
   /** Shown on the online ordering menu */
   @IsOptional() @IsBoolean()
   onlineAvailable?: boolean;
+
+  /** Bakery item made here in batches (recipe used when baked) */
+  @IsOptional() @IsBoolean()
+  madeInHouse?: boolean;
+
+  /** Pieces one recipe batch makes */
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 3 }) @Min(0.001)
+  batchYield?: number;
+
+  /** Fresh for this many hours after baking; empty = keeps */
+  @IsOptional() @ValidateIf((_, v) => v !== null) @Type(() => Number) @IsInt() @Min(1) @Max(24 * 365)
+  shelfLifeHours?: number | null;
 
   /** Picture shown on the POS tile and online menu */
   @IsOptional() @ValidateIf((_, v) => v !== null && v !== '') @IsUrl({ require_tld: false })

@@ -479,5 +479,49 @@ ok(big.s === 400 && /balance/.test(big.j.message), 'not enough wallet balance ->
 await call('POST', '/member/logout-all', { token: mt });
 ok((await call('GET', '/member/me', { token: mt })).s === 401, 'log out everywhere: the old token stops working');
 
+// ── Bakery production
+const inv = async (sku) => {
+  const pr = (await call('GET', `/products/lookup?code=${sku}&storeId=${pp01.id}`, { token: mgr })).j;
+  return Number(pr.stock);
+};
+const planB = (await call('GET', `/production/plan?storeId=${pp01.id}`, { token: cashier })).j;
+const pc = planB.products.find((x) => x.sku === 'BK-001');
+ok(pc && pc.batchYield === 24 && pc.costPerPiece === 0.305 && pc.shelfLifeHours === 24, `bake plan: croissant batch of 24, $${pc?.costPerPiece}/piece, fresh 24 h`);
+ok(pc.usuallySells >= 0 && pc.suggestedQty % 24 === 0, `suggested ${pc.suggestedQty} croissants (whole batches) for ${pc.usuallySells} usually sold`);
+const flour0 = await inv('IN-013'), crois0 = await inv('BK-001');
+const bk1 = await call('POST', '/production/batches', { token: cashier, body: { storeId: pp01.id, productId: pc.id, quantity: 48, done: true } });
+ok(bk1.s === 201 && bk1.j.status === 'DONE' && bk1.j.unitCost === '0.305' && bk1.j.totalCost === '14.64' && bk1.j.expiresAt, `baked 48 croissants: $${bk1.j.totalCost}, $${bk1.j.unitCost} each`);
+ok((await inv('BK-001')) === crois0 + 48 && (await inv('IN-013')) === flour0 - 2000, 'stock: +48 croissants, -2000 g flour (2 batches)');
+ok(Number((await call('GET', `/products/${pc.id}`, { token: mgr })).j.costPrice) === 0.305, 'croissant cost price is now the real baking cost');
+ok((await call('POST', '/production/batches', { token: cashier, body: { storeId: pp02.id, productId: pc.id, quantity: 24 } })).s === 403, 'cashier cannot bake for another store');
+ok((await call('POST', '/production/batches', { token: cashier, body: { storeId: pp01.id, productId: water.id, quantity: 5 } })).s === 400, 'only bakery items can be baked');
+const muffin = planB.products.find((x) => x.sku === 'BK-002');
+const bk2 = (await call('POST', '/production/batches', { token: cashier, body: { storeId: pp01.id, productId: muffin.id, quantity: 12 } })).j;
+ok(bk2.status === 'PLANNED' && bk2.producedQty === null, 'muffin batch planned (nothing in stock yet)');
+const choc0 = await inv('IN-018');
+const [d1, d2] = await Promise.all([1, 2].map(() => call('POST', `/production/batches/${bk2.id}/complete`, { token: cashier, body: { producedQty: 10 } })));
+ok([d1.s, d2.s].sort().join() === '201,400', 'two taps on "Done" at once: only one completes');
+ok((await inv('IN-018')) === choc0 - 125, 'muffins: 10 of 12 made -> 125 g chocolate (10/12 of 150 g)');
+ok((await call('POST', `/production/batches/${bk2.id}/cancel`, { token: cashier })).s === 400, 'a finished batch cannot be cancelled');
+// Selling a bakery item takes pieces, not ingredients
+const flour1 = await inv('IN-013');
+const bs = await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, items: [{ productId: pc.id, quantity: 2 }], payments: [{ method: 'CASH', amount: 10 }] } });
+ok(bs.s === 201 && (await inv('IN-013')) === flour1 && Number(bs.j.items[0].costPrice) === 0.305, 'croissant sale: flour untouched, line cost $0.305');
+// End of day
+const eodB = (await call('GET', `/production/end-of-day?storeId=${pp01.id}`, { token: cashier })).j;
+const ec = eodB.find((x) => x.sku === 'BK-001');
+ok(ec && ec.expired === Math.max(0, ec.stock - 48) && ec.goodTomorrow === Math.min(ec.stock, 48), `end of day: ${ec?.stock} in stock, ${ec?.expired} older than the fresh batch`);
+const milkId = (await call('GET', `/products/lookup?code=IN-002&storeId=${pp01.id}`, { token: mgr })).j.id;
+const w1 = await call('POST', '/production/waste', { token: cashier, body: { storeId: pp01.id, items: [{ productId: pc.id, quantity: 2, reason: 'EXPIRED' }, { productId: milkId, quantity: 500, reason: 'DAMAGED', note: 'spilled' }] } });
+ok(w1.s === 201 && w1.j.length === 2 && w1.j.find((x) => x.reason === 'EXPIRED').cost === 0.61, 'waste recorded: 2 croissants ($0.61) + 500 ml milk');
+ok((await call('POST', '/production/waste', { token: cashier, body: { storeId: pp01.id, items: [{ productId: pc.id, quantity: 100000, reason: 'UNSOLD' }] } })).s === 400, 'cannot write off more than in stock');
+const repB = await call('GET', `/production/report?storeId=${pp01.id}`, { token: mgr });
+const rc = repB.j.data?.find((x) => x.sku === 'BK-001');
+ok(repB.s === 200 && rc.produced === 48 && rc.wasted === 2 && rc.wastePercent === 4.2 && rc.productionCost === 14.64, `production report: made 48, wasted 2 (${rc?.wastePercent}%)`);
+ok(repB.j.byReason.some((x) => x.reason === 'DAMAGED' && x.cost === 0.8) && repB.j.totals.wasteCost === 1.41, `waste by reason, total waste $${repB.j.totals?.wasteCost}`);
+ok((await call('GET', '/production/report', { token: cashier })).s === 403, 'cashiers cannot see the production report');
+const recipesB = (await call('GET', '/recipes', { token: mgr })).j.find((x) => x.sku === 'BK-001');
+ok(recipesB?.madeInHouse && recipesB.recipeCost === 0.305, 'recipes page: croissant cost per piece from the batch recipe');
+
 await new Promise((r) => setTimeout(r, 2500));
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

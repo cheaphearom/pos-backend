@@ -223,6 +223,14 @@ async function main() {
       ['IN-010', 'Cup 12oz', 'pcs', 0.05, 500, 100],
       ['IN-011', 'Cup 16oz', 'pcs', 0.06, 500, 100],
       ['IN-012', 'Lid', 'pcs', 0.02, 1000, 200],
+      // bakery
+      ['IN-013', 'Flour', 'g', 0.0012, 25000, 5000],
+      ['IN-014', 'Butter', 'g', 0.009, 10000, 2000],
+      ['IN-015', 'Eggs', 'pcs', 0.12, 120, 30],
+      ['IN-016', 'Sugar', 'g', 0.001, 10000, 2000],
+      ['IN-017', 'Yeast', 'g', 0.02, 1000, 200],
+      ['IN-018', 'Chocolate chips', 'g', 0.012, 3000, 600],
+      ['IN-019', 'Muffin cases', 'pcs', 0.02, 500, 100],
     ];
     const ing: Record<string, string> = {};
     for (const [sku, name, unit, cost, stock, reorder] of ingDefs) {
@@ -241,6 +249,15 @@ async function main() {
     for (const [drink, items] of Object.entries(recipes)) {
       const d = await prisma.product.findFirstOrThrow({ where: { name: drink, categoryId: coffee.id } });
       await prisma.recipeItem.createMany({ data: items.map(([n, q]) => ({ productId: d.id, ingredientId: ing[n], quantity: q })) });
+    }
+    // Bakery: made here in batches. The recipe is for one batch; baking uses it, selling takes pieces from stock.
+    const bakes: [string, number, number, [string, number][]][] = [
+      ['BK-001', 24, 24, [['Flour', 1000], ['Butter', 600], ['Eggs', 2], ['Sugar', 80], ['Yeast', 20]]],
+      ['BK-002', 12, 48, [['Flour', 400], ['Sugar', 250], ['Eggs', 4], ['Butter', 150], ['Chocolate chips', 150], ['Muffin cases', 12]]],
+    ];
+    for (const [sku, batchYield, shelfLifeHours, items] of bakes) {
+      const b = await prisma.product.update({ where: { sku }, data: { madeInHouse: true, batchYield, shelfLifeHours } });
+      await prisma.recipeItem.createMany({ data: items.map(([n, q]) => ({ productId: b.id, ingredientId: ing[n], quantity: q })) });
     }
     // How options change recipes (for every drink that offers them)
     const opt = async (groupId: string, name: string) => (await prisma.modifierOption.findFirstOrThrow({ where: { groupId, name } })).id;
@@ -262,7 +279,7 @@ async function main() {
     // Medium is the base recipe, so it has no effect.
     void ice;
     console.log('Online ordering: /order/PP01 (pickup) and /order/PP01?table=5 (table QR).');
-    console.log('Café: PP01 is in café mode. Drinks CF-001..CF-006 with Size/Sugar/Ice/Milk/Extras; bakery BK-001, BK-002.');
+    console.log('Café: PP01 is in café mode. Drinks CF-001..CF-006 with Size/Sugar/Ice/Milk/Extras; bakery BK-001 (batch of 24), BK-002 (batch of 12) made in house.');
   }
 
   console.log(`Seeded ${stores.length} stores, ${n} products, ${customers.length} customers.`);

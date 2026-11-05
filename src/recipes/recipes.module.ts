@@ -63,7 +63,8 @@ export class RecipesService {
     const productIds = [...new Set(lines.map((l) => l.productId))];
     const optionIds = [...new Set(lines.flatMap((l) => l.optionIds))];
     const [recipes, effects] = await Promise.all([
-      this.prisma.recipeItem.findMany({ where: { productId: { in: productIds } } }),
+      // Bakery items made in batches use their recipe when baked, not when sold.
+      this.prisma.recipeItem.findMany({ where: { productId: { in: productIds }, product: { madeInHouse: false } } }),
       optionIds.length ? this.prisma.modifierEffect.findMany({ where: { optionId: { in: optionIds } } }) : [],
     ]);
     if (!recipes.length && !effects.length) return lines.map(() => ({ perUnit: new Map(), unitCost: null }));
@@ -84,9 +85,10 @@ export class RecipesService {
   /** Sellable products with their recipe cost (default options) and margin. */
   async list() {
     const products = await this.prisma.product.findMany({
-      where: { isActive: true, isIngredient: false, OR: [{ recipe: { some: {} } }, { modifierGroups: { some: {} } }, { trackStock: false }] },
+      where: { isActive: true, isIngredient: false, OR: [{ recipe: { some: {} } }, { modifierGroups: { some: {} } }, { trackStock: false }, { madeInHouse: true }] },
       select: {
-        id: true, sku: true, name: true, sellPrice: true, costPrice: true, unit: true,
+        id: true, sku: true, name: true, sellPrice: true, costPrice: true, unit: true, madeInHouse: true, batchYield: true,
+        recipe: { select: { quantity: true, ingredient: { select: { costPrice: true } } } },
         _count: { select: { recipe: true } },
         modifierGroups: { select: { group: { select: { options: { where: { isActive: true, isDefault: true }, select: { id: true } } } } } },
       },
@@ -94,10 +96,14 @@ export class RecipesService {
     });
     const usage = await this.usageForLines(products.map((p) => ({ productId: p.id, optionIds: p.modifierGroups.flatMap((g) => g.group.options.map((o) => o.id)) })));
     return products.map((p, i) => {
-      const cost = usage[i].unitCost;
+      // Made in batches: cost of one piece = batch cost / pieces per batch.
+      const cost = p.madeInHouse
+        ? (p.recipe.length ? p.recipe.reduce((s, r) => s + Number(r.quantity) * Number(r.ingredient.costPrice), 0) / Number(p.batchYield || 1) : null)
+        : usage[i].unitCost;
       const price = Number(p.sellPrice);
       return {
         id: p.id, sku: p.sku, name: p.name, price, unit: p.unit, ingredients: p._count.recipe,
+        madeInHouse: p.madeInHouse, batchYield: Number(p.batchYield),
         recipeCost: cost === null ? null : Math.round(cost * 10000) / 10000,
         marginPercent: cost === null || !price ? null : Math.round(((price - cost) / price) * 1000) / 10,
       };
@@ -108,7 +114,7 @@ export class RecipesService {
     const product = await this.prisma.product.findUniqueOrThrow({
       where: { id: productId },
       select: {
-        id: true, sku: true, name: true, sellPrice: true, unit: true,
+        id: true, sku: true, name: true, sellPrice: true, unit: true, madeInHouse: true, batchYield: true, shelfLifeHours: true,
         recipe: { include: { ingredient: { select: { id: true, sku: true, name: true, unit: true, costPrice: true } } }, orderBy: { ingredient: { name: 'asc' } } },
         modifierGroups: {
           orderBy: { sortOrder: 'asc' },
