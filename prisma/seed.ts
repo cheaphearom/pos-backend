@@ -127,6 +127,34 @@ async function main() {
   // KHQR demo account on the first store (replace with your real Bakong account)
   await prisma.store.update({ where: { code: 'PP01' }, data: { khqrAccountId: 'demo_shop@aclb', khqrMerchantName: 'POS DEMO SHOP', khqrCity: 'Phnom Penh' } });
 
+  // Wallet cards (demo): 10 unused cards + one active card with $20 for the first customer (PIN 1234)
+  if (!(await prisma.walletCard.count())) {
+    const luhn = (body: string) => {
+      let sum = 0;
+      for (let i = 0; i < body.length; i++) {
+        let d = Number(body[body.length - 1 - i]);
+        if (i % 2 === 0) {
+          d *= 2;
+          if (d > 9) d -= 9;
+        }
+        sum += d;
+      }
+      return String((10 - (sum % 10)) % 10);
+    };
+    const cards = Array.from({ length: 11 }, (_, i) => {
+      const body = `889900000000${String(i + 1).padStart(3, '0')}`;
+      return { cardNumber: body + luhn(body), serialNumber: `DEMO${String(i + 1).padStart(2, '0')}-SERIAL` };
+    });
+    await prisma.walletCard.createMany({ data: cards });
+    const member = await prisma.customer.findUnique({ where: { code: 'M0000001' } });
+    const first = await prisma.walletCard.update({
+      where: { cardNumber: cards[0].cardNumber },
+      data: { status: 'ACTIVE', customerId: member?.id, balance: 20, activatedAt: new Date(), pinHash: await bcrypt.hash('1234', 10) },
+    });
+    await prisma.walletTransaction.create({ data: { cardId: first.id, type: 'TOPUP', amount: 20, balanceAfter: 20, method: 'CASH', note: 'Demo top-up' } });
+    console.log(`Wallet demo card: ${cards[0].cardNumber} (PIN 1234, $20). Unused: ${cards[1].cardNumber} with serial ${cards[1].serialNumber}, ...`);
+  }
+
   console.log(`Seeded ${stores.length} stores, ${n} products, ${customers.length} customers.`);
   console.log('Login: admin@pos.local / Password@123 (also manager.pp@, manager.sr@, cashier1@, cashier2@, cashier3@)');
 }

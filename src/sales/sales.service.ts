@@ -12,6 +12,7 @@ import { priceSale, PricingError } from './pricing';
 import { applyPromotions } from '../promotions/engine';
 import { PromotionsService } from '../promotions/promotions.module';
 import { KhqrService } from '../payments/payments.module';
+import { WalletService } from '../wallet/wallet.service';
 import { REPORT_TIMEZONE } from '../config';
 import { CreateRefundDto, CreateSaleDto, SaleQueryDto } from './sales.dto';
 
@@ -36,6 +37,7 @@ export class SalesService {
     private readonly webhooks: WebhooksService,
     private readonly promotions: PromotionsService,
     private readonly khqr: KhqrService,
+    private readonly wallet: WalletService,
   ) {}
 
   /**
@@ -127,6 +129,10 @@ export class SalesService {
     const changeDue = paid.minus(amountDue);
 
     const userId = userIdOf(p);
+    const usesWallet = dto.payments.some((x) => x.method === 'WALLET');
+    if (usesWallet && offlineAt) throw new BadRequestException('Wallet card payments need a connection and cannot be made offline');
+    if (usesWallet) await this.wallet.verifyForPayment(dto.payments); // PIN checks, outside the transaction
+
     const shift = userId
       ? await this.prisma.shift.findFirst({ where: { storeId: dto.storeId, userId, status: 'OPEN' }, select: { id: true } })
       : null;
@@ -186,6 +192,11 @@ export class SalesService {
 
           // KHQR payments must really be paid and can pay for one sale only.
           await this.khqr.claimForSale(tx, created.id, dto.storeId, dto.payments);
+
+          // Wallet cards: take the money off the balance (fails the whole sale if not enough).
+          for (const pay of dto.payments.filter((x) => x.method === 'WALLET')) {
+            await this.wallet.debitForSale(tx, pay.reference!, pay.amount, { saleId: created.id, storeId: dto.storeId, shiftId: shift?.id, userId, receiptNo });
+          }
 
           // 3. Take items out of stock. Sorted by product so concurrent sales lock rows in the same order (no deadlocks).
           const toDeduct = lines.filter((l) => l.prod.trackStock).sort((a, b) => a.prod.id.localeCompare(b.prod.id));
@@ -289,6 +300,7 @@ export class SalesService {
           include: {
             items: { orderBy: { lineNo: 'asc' }, include: { refundItems: true, product: { select: { trackStock: true } } } },
             refunds: true,
+            payments: true,
           },
         });
         if (!sale) throw new NotFoundException('Sale not found');
@@ -341,6 +353,12 @@ export class SalesService {
             items: { create: refundItems },
           },
         });
+
+        if ((dto.method ?? 'CASH') === 'WALLET') {
+          const walletPay = sale.payments.find((x) => x.method === 'WALLET');
+          if (!walletPay?.reference) throw new BadRequestException('This sale was not paid with a wallet card');
+          await this.wallet.creditRefund(tx, walletPay.reference, amount, { saleId, storeId: sale.storeId, userId, reference: refund.refundNo });
+        }
 
         for (const ri of refundItems) {
           await tx.saleItem.update({ where: { id: ri.saleItemId }, data: { refundedQty: { increment: ri.quantity } } });

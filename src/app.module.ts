@@ -18,6 +18,7 @@ import { ProductsModule } from './products/products.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
+import { WalletModule } from './wallet/wallet.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 import { ShiftsModule } from './shifts/shifts.module';
@@ -46,6 +47,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     PurchasingModule,
     PromotionsModule,
     PaymentsModule,
+    WalletModule,
   ],
   controllers: [HealthController],
   providers: [

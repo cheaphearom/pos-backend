@@ -45,7 +45,8 @@ enum PaymentMethod {
   CARD
   KHQR
   BANK_TRANSFER
-  E_WALLET
+  E_WALLET // other e-wallets (Wing, TrueMoney...)
+  WALLET // the store's own wallet card (stored balance)
   OTHER
 }
 
@@ -289,6 +290,7 @@ model Customer {
 
   sales        Sale[]
   loyaltyTxns  LoyaltyTransaction[]
+  walletCards  WalletCard[]
 
   @@index([name])
   @@map("customers")
@@ -675,4 +677,71 @@ model KhqrPayment {
 
   @@index([storeId, createdAt])
   @@map("khqr_payments")
+}
+
+// ──────────────────────── Wallet cards (stored value) ────────────────────────
+
+enum WalletCardStatus {
+  INACTIVE // printed, not given to a customer yet
+  ACTIVE
+  BLOCKED // lost / suspicious: cannot pay or top up
+  CLOSED // replaced or cancelled; balance moved away
+}
+
+enum WalletTxType {
+  TOPUP
+  PAYMENT
+  REFUND
+  ADJUST
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+/// A customer's wallet card. The card number is the barcode; the serial (printed on the back) proves you hold the card.
+model WalletCard {
+  id           String           @id @default(uuid()) @db.Uuid
+  cardNumber   String           @unique @map("card_number") @db.VarChar(19)
+  serialNumber String           @unique @map("serial_number") @db.VarChar(20)
+  customerId   String?          @map("customer_id") @db.Uuid
+  status       WalletCardStatus @default(INACTIVE)
+  balance      Decimal          @default(0) @db.Decimal(14, 2)
+  pinHash      String?          @map("pin_hash")
+  pinFailures  Int              @default(0) @map("pin_failures")
+  note         String?
+  issuedAt     DateTime         @default(now()) @map("issued_at")
+  activatedAt  DateTime?        @map("activated_at")
+  lastUsedAt   DateTime?        @map("last_used_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  customer     Customer?           @relation(fields: [customerId], references: [id])
+  transactions WalletTransaction[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("wallet_cards")
+}
+
+/// Every balance change (append-only ledger).
+model WalletTransaction {
+  id           BigInt         @id @default(autoincrement())
+  cardId       String         @map("card_id") @db.Uuid
+  type         WalletTxType
+  amount       Decimal        @db.Decimal(14, 2) // + in, - out
+  balanceAfter Decimal        @map("balance_after") @db.Decimal(14, 2)
+  method       PaymentMethod? // how a top-up was paid
+  reference    String?        @db.VarChar(100)
+  clientRef    String?        @unique @map("client_ref") @db.VarChar(64) // stops a retried top-up counting twice
+  saleId       String?        @map("sale_id") @db.Uuid
+  storeId      String?        @map("store_id") @db.Uuid
+  shiftId      String?        @map("shift_id") @db.Uuid
+  userId       String?        @map("user_id") @db.Uuid
+  note         String?
+  createdAt    DateTime       @default(now()) @map("created_at")
+
+  card WalletCard @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId, createdAt])
+  @@index([storeId, createdAt])
+  @@index([shiftId])
+  @@map("wallet_transactions")
 }

@@ -21,6 +21,8 @@ export const config = {
   loyaltyPointValue: num(process.env.LOYALTY_POINT_VALUE, 0.01),
   allowNegativeStock: process.env.ALLOW_NEGATIVE_STOCK === 'true',
   rateLimitPerMinute: num(process.env.RATE_LIMIT_PER_MINUTE, 300),
+  /** First digits of generated wallet card numbers */
+  walletCardPrefix: process.env.WALLET_CARD_PREFIX ?? '8899',
 };
 
 if (config.nodeEnv === 'production' && config.jwtAccessSecret.startsWith('change-me')) {

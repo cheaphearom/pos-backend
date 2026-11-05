@@ -1,6 +1,6 @@
 import { PaymentMethod, SaleStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, Matches, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { DateRangeQueryDto } from '../common/date-range';
 
 export class SaleItemDto {
@@ -22,9 +22,13 @@ export class PaymentDto {
   @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01)
   amount: number;
 
-  /** Card approval code, KHQR transaction id, etc. */
+  /** Card approval code, KHQR md5, wallet card number, etc. */
   @IsOptional() @IsString() @MaxLength(100)
   reference?: string;
+
+  /** Wallet card PIN (only for method WALLET; never stored) */
+  @IsOptional() @Matches(/^\d{4,6}$/, { message: 'PIN must be 4 to 6 digits' })
+  pin?: string;
 }
 
 export class CreateSaleDto {

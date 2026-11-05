@@ -199,6 +199,33 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Wallet cards: money customers hold on their cards right now (a liability: you owe it),
+   * plus top-ups, payments and refunds in the period.
+   */
+  async wallet(p: Principal, q: ReportQueryDto) {
+    const { from, to, tz } = this.scope(p, q);
+    const storeIds = q.storeId ? [q.storeId] : p.storeIds;
+    const storeFilter = storeIds === 'ALL' ? Prisma.sql`true` : storeIds.length ? Prisma.sql`w.store_id IN (${Prisma.join(storeIds.map((id) => Prisma.sql`${id}::uuid`))})` : Prisma.sql`false`;
+    const [liability] = await this.prisma.$queryRaw<any[]>`
+      SELECT count(*) FILTER (WHERE status = 'ACTIVE')::int AS "activeCards",
+             count(*) FILTER (WHERE status = 'INACTIVE')::int AS "unusedCards",
+             coalesce(sum(balance) FILTER (WHERE status IN ('ACTIVE', 'BLOCKED')), 0) AS "outstanding"
+        FROM wallet_cards`;
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT w.type, coalesce(w.method::text, '') AS method, count(*)::int AS count, sum(w.amount) AS amount
+        FROM wallet_transactions w
+       WHERE ${storeFilter}
+         AND w.created_at >= ((${from}::date)::timestamp AT TIME ZONE ${tz}) AT TIME ZONE 'UTC'
+         AND w.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE ${tz}) AT TIME ZONE 'UTC'
+       GROUP BY 1, 2 ORDER BY 1, 2`;
+    return {
+      from, to,
+      outstanding: round2(num(liability.outstanding)), activeCards: liability.activeCards, unusedCards: liability.unusedCards,
+      data: rows.map((r) => ({ type: r.type, method: r.method || null, count: r.count, amount: round2(num(r.amount)) })),
+    };
+  }
+
   /** How much each promotion gave away and how often it was used. */
   async promotions(p: Principal, q: ReportQueryDto) {
     const { where, from, to } = this.scope(p, q);
@@ -296,6 +323,11 @@ export class ReportsController {
   @Get('loyalty')
   loyalty(@CurrentPrincipal() p: Principal, @Query() q: TopQueryDto) {
     return this.reports.loyalty(p, q);
+  }
+
+  @Get('wallet')
+  wallet(@CurrentPrincipal() p: Principal, @Query() q: ReportQueryDto) {
+    return this.reports.wallet(p, q);
   }
 
   @Get('promotions')
