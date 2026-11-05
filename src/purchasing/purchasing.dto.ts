@@ -52,7 +52,7 @@ export class PoItemDto {
   quantity: number;
 
   /** Cost per unit; defaults to the product's current cost price */
-  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0)
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 6 }) @Min(0)
   unitCost?: number;
 }
 
@@ -85,7 +85,7 @@ export class ReceiveItemDto {
   quantity: number;
 
   /** Actual cost on the invoice, if different from the order */
-  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0)
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 6 }) @Min(0)
   unitCost?: number;
 }
 

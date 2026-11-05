@@ -206,6 +206,61 @@ async function main() {
       for (const st of stores) await prisma.inventory.create({ data: { storeId: st.id, productId: p.id, quantity: 30, reorderLevel: 5 } });
     }
     await prisma.store.update({ where: { code: 'PP01' }, data: { hasKitchen: true } });
+
+    // Ingredients & supplies (cost per g / ml / piece) with stock in every store
+    const ingCat = await prisma.category.create({ data: { name: 'Ingredients' } });
+    const ingDefs: [string, string, string, number, number, number][] = [
+      // sku, name, unit, cost per unit, stock, reorder level
+      ['IN-001', 'Coffee beans', 'g', 0.015, 5000, 1000],
+      ['IN-002', 'Fresh milk', 'ml', 0.0016, 20000, 4000],
+      ['IN-003', 'Oat milk', 'ml', 0.004, 6000, 1000],
+      ['IN-004', 'Soy milk', 'ml', 0.003, 6000, 1000],
+      ['IN-005', 'Matcha powder', 'g', 0.08, 1000, 200],
+      ['IN-006', 'Lemon tea base', 'ml', 0.002, 10000, 2000],
+      ['IN-007', 'Sugar syrup', 'ml', 0.002, 5000, 1000],
+      ['IN-008', 'Whipped cream', 'g', 0.01, 2000, 400],
+      ['IN-009', 'Caramel syrup', 'ml', 0.006, 2000, 400],
+      ['IN-010', 'Cup 12oz', 'pcs', 0.05, 500, 100],
+      ['IN-011', 'Cup 16oz', 'pcs', 0.06, 500, 100],
+      ['IN-012', 'Lid', 'pcs', 0.02, 1000, 200],
+    ];
+    const ing: Record<string, string> = {};
+    for (const [sku, name, unit, cost, stock, reorder] of ingDefs) {
+      const p = await prisma.product.create({ data: { sku, name, unit, costPrice: cost, sellPrice: 0, isIngredient: true, categoryId: ingCat.id, taxable: false } });
+      ing[name] = p.id;
+      for (const st of stores) await prisma.inventory.create({ data: { storeId: st.id, productId: p.id, quantity: stock, reorderLevel: reorder } });
+    }
+    const recipes: Record<string, [string, number][]> = {
+      Americano: [['Coffee beans', 18], ['Sugar syrup', 15], ['Cup 12oz', 1], ['Lid', 1]],
+      Latte: [['Coffee beans', 18], ['Fresh milk', 200], ['Sugar syrup', 15], ['Cup 12oz', 1], ['Lid', 1]],
+      'Iced Latte': [['Coffee beans', 18], ['Fresh milk', 180], ['Sugar syrup', 20], ['Cup 16oz', 1], ['Lid', 1]],
+      Cappuccino: [['Coffee beans', 18], ['Fresh milk', 150], ['Sugar syrup', 15], ['Cup 12oz', 1], ['Lid', 1]],
+      'Iced Matcha Latte': [['Matcha powder', 4], ['Fresh milk', 200], ['Sugar syrup', 20], ['Cup 16oz', 1], ['Lid', 1]],
+      'Iced Lemon Tea': [['Lemon tea base', 250], ['Sugar syrup', 20], ['Cup 16oz', 1], ['Lid', 1]],
+    };
+    for (const [drink, items] of Object.entries(recipes)) {
+      const d = await prisma.product.findFirstOrThrow({ where: { name: drink, categoryId: coffee.id } });
+      await prisma.recipeItem.createMany({ data: items.map(([n, q]) => ({ productId: d.id, ingredientId: ing[n], quantity: q })) });
+    }
+    // How options change recipes (for every drink that offers them)
+    const opt = async (groupId: string, name: string) => (await prisma.modifierOption.findFirstOrThrow({ where: { groupId, name } })).id;
+    const effects: [string, object][] = [
+      [await opt(size.id, 'Small'), { type: 'SCALE', percent: -20 }],
+      [await opt(size.id, 'Large'), { type: 'SCALE', percent: 30 }],
+      [await opt(size.id, 'Large'), { type: 'REPLACE', ingredientId: ing['Cup 12oz'], replaceWithId: ing['Cup 16oz'] }],
+      [await opt(sugar.id, '0%'), { type: 'SCALE', ingredientId: ing['Sugar syrup'], percent: -100 }],
+      [await opt(sugar.id, '25%'), { type: 'SCALE', ingredientId: ing['Sugar syrup'], percent: -75 }],
+      [await opt(sugar.id, '50%'), { type: 'SCALE', ingredientId: ing['Sugar syrup'], percent: -50 }],
+      [await opt(sugar.id, '75%'), { type: 'SCALE', ingredientId: ing['Sugar syrup'], percent: -25 }],
+      [await opt(milk.id, 'Oat milk'), { type: 'REPLACE', ingredientId: ing['Fresh milk'], replaceWithId: ing['Oat milk'] }],
+      [await opt(milk.id, 'Soy milk'), { type: 'REPLACE', ingredientId: ing['Fresh milk'], replaceWithId: ing['Soy milk'] }],
+      [await opt(extra.id, 'Extra shot'), { type: 'ADD', ingredientId: ing['Coffee beans'], quantity: 9 }],
+      [await opt(extra.id, 'Whipped cream'), { type: 'ADD', ingredientId: ing['Whipped cream'], quantity: 15 }],
+      [await opt(extra.id, 'Caramel syrup'), { type: 'ADD', ingredientId: ing['Caramel syrup'], quantity: 15 }],
+    ];
+    await prisma.modifierEffect.createMany({ data: effects.map(([optionId, e]) => ({ optionId, ...(e as any) })) });
+    // Medium is the base recipe, so it has no effect.
+    void ice;
     console.log('Café: PP01 is in café mode. Drinks CF-001..CF-006 with Size/Sugar/Ice/Milk/Extras; bakery BK-001, BK-002.');
   }
 

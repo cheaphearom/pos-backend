@@ -14,6 +14,7 @@ export class ProductsService {
     const where: Prisma.ProductWhereInput = {
       categoryId: q.categoryId,
       ...(!q.includeInactive && { isActive: true }),
+      ...(q.kind && { isIngredient: q.kind === 'ingredient' }),
       ...(q.search && {
         OR: [
           { name: { contains: q.search, mode: 'insensitive' } },
@@ -66,10 +67,10 @@ export class ProductsService {
     const rows = await this.prisma.product.findMany({
       where: sinceDate
         ? { OR: [{ updatedAt: { gt: sinceDate } }, { inventory: { some: { storeId, updatedAt: { gt: sinceDate } } } }] }
-        : { isActive: true },
+        : { isActive: true, isIngredient: false },
       select: {
         id: true, sku: true, barcode: true, name: true, unit: true, sellPrice: true, taxable: true,
-        trackStock: true, isActive: true, categoryId: true, imageUrl: true,
+        trackStock: true, isActive: true, categoryId: true, imageUrl: true, isIngredient: true,
         inventory: { where: { storeId }, select: { quantity: true, priceOverride: true } },
         modifierGroups: { orderBy: { sortOrder: 'asc' }, select: { groupId: true } },
       },
@@ -78,8 +79,9 @@ export class ProductsService {
     return {
       serverTime,
       full: !sinceDate,
-      products: rows.map(({ inventory, sellPrice, modifierGroups, ...r }) => ({
+      products: rows.map(({ inventory, sellPrice, modifierGroups, isIngredient, ...r }) => ({
         ...r,
+        isActive: r.isActive && !isIngredient, // ingredients are never sold at the POS
         modifierGroupIds: modifierGroups.map((m) => m.groupId),
         price: inventory[0]?.priceOverride ?? sellPrice,
         stock: inventory[0]?.quantity ?? '0',

@@ -226,6 +226,21 @@ export class ReportsService {
     };
   }
 
+  /** Ingredients used up by recipes (beans, milk, cups...) and their cost, from the stock ledger. */
+  async ingredientUsage(p: Principal, q: ReportQueryDto) {
+    const { from, to, tz } = this.scope(p, q);
+    const storeIds = q.storeId ? [q.storeId] : p.storeIds;
+    const sf = storeIds === 'ALL' ? Prisma.sql`true` : storeIds.length ? Prisma.sql`m.store_id IN (${Prisma.join(storeIds.map((id) => Prisma.sql`${id}::uuid`))})` : Prisma.sql`false`;
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT pr.id, pr.sku, pr.name, pr.unit, -sum(m.quantity) AS used, -sum(m.quantity) * pr.cost_price AS cost
+        FROM stock_movements m JOIN products pr ON pr.id = m.product_id
+       WHERE m.type = 'RECIPE' AND ${sf}
+         AND m.created_at >= ((${from}::date)::timestamp AT TIME ZONE ${tz}) AT TIME ZONE 'UTC'
+         AND m.created_at < ((${to}::date + 1)::timestamp AT TIME ZONE ${tz}) AT TIME ZONE 'UTC'
+       GROUP BY pr.id ORDER BY cost DESC`;
+    return { from, to, data: rows.map((r) => ({ ...r, used: Math.round(num(r.used) * 1000) / 1000, cost: round2(num(r.cost)) })) };
+  }
+
   /** Coupons used per campaign, and gift vouchers sold / spent / still outstanding. */
   async couponsAndVouchers(p: Principal, q: ReportQueryDto) {
     const { from, to, tz } = this.scope(p, q);
@@ -358,6 +373,11 @@ export class ReportsController {
   @Get('loyalty')
   loyalty(@CurrentPrincipal() p: Principal, @Query() q: TopQueryDto) {
     return this.reports.loyalty(p, q);
+  }
+
+  @Get('ingredient-usage')
+  ingredientUsage(@CurrentPrincipal() p: Principal, @Query() q: ReportQueryDto) {
+    return this.reports.ingredientUsage(p, q);
   }
 
   @Get('coupons-vouchers')

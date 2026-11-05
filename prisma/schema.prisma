@@ -25,6 +25,7 @@ enum StockMovementType {
   ADJUSTMENT // manual count correction, damage, loss
   TRANSFER_OUT
   TRANSFER_IN
+  RECIPE // ingredients used up by drinks / dishes sold
 }
 
 enum TransferStatus {
@@ -184,17 +185,21 @@ model Product {
   description String?
   categoryId  String?  @map("category_id") @db.Uuid
   unit        String   @default("pcs") @db.VarChar(20)
-  costPrice   Decimal  @default(0) @map("cost_price") @db.Decimal(14, 2)
+  costPrice   Decimal  @default(0) @map("cost_price") @db.Decimal(14, 6) // per unit; ingredients can cost $0.0016 per ml
   sellPrice   Decimal  @map("sell_price") @db.Decimal(14, 2)
   taxable     Boolean  @default(true)
   trackStock  Boolean  @default(true) @map("track_stock") // false for services
   isActive    Boolean  @default(true) @map("is_active")
   imageUrl    String?  @map("image_url")
+  /// Ingredient / supply (beans, milk, cups): kept in stock, used by recipes, not sold at the POS
+  isIngredient Boolean @default(false) @map("is_ingredient")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   category       Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   modifierGroups ProductModifierGroup[]
+  recipe         RecipeItem[]         @relation("RecipeOf")
+  usedIn         RecipeItem[]         @relation("RecipeIngredient")
   inventory      Inventory[]
   stockMovements StockMovement[]
   saleItems      SaleItem[]
@@ -400,7 +405,7 @@ model SaleItem {
   name         String  @db.VarChar(200)
   quantity     Decimal @db.Decimal(14, 3)
   unitPrice    Decimal @map("unit_price") @db.Decimal(14, 2)
-  costPrice    Decimal @map("cost_price") @db.Decimal(14, 2)
+  costPrice    Decimal @map("cost_price") @db.Decimal(14, 6) // per unit at the time of sale (recipe cost for drinks)
   discount     Decimal @default(0) @db.Decimal(14, 2) // line + share of sale discount
   taxRate      Decimal @map("tax_rate") @db.Decimal(5, 4)
   netAmount    Decimal @map("net_amount") @db.Decimal(14, 2) // qty*price - discount
@@ -588,7 +593,7 @@ model PurchaseOrderItem {
   lineNo          Int     @map("line_no")
   productId       String  @map("product_id") @db.Uuid
   quantity        Decimal @db.Decimal(14, 3)
-  unitCost        Decimal @map("unit_cost") @db.Decimal(14, 2)
+  unitCost        Decimal @map("unit_cost") @db.Decimal(14, 6)
   receivedQty     Decimal @default(0) @map("received_qty") @db.Decimal(14, 3)
 
   purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
@@ -620,7 +625,7 @@ model GoodsReceiptItem {
   goodsReceiptId      String  @map("goods_receipt_id") @db.Uuid
   purchaseOrderItemId String  @map("purchase_order_item_id") @db.Uuid
   quantity            Decimal @db.Decimal(14, 3)
-  unitCost            Decimal @map("unit_cost") @db.Decimal(14, 2)
+  unitCost            Decimal @map("unit_cost") @db.Decimal(14, 6)
 
   goodsReceipt      GoodsReceipt      @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
   purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
@@ -940,7 +945,8 @@ model ModifierOption {
   sortOrder  Int      @default(0) @map("sort_order")
   isActive   Boolean  @default(true) @map("is_active")
 
-  group ModifierGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  group   ModifierGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  effects ModifierEffect[]
 
   @@index([groupId])
   @@map("modifier_options")
@@ -967,4 +973,42 @@ model StoreDayCounter {
 
   @@id([storeId, day])
   @@map("store_day_counters")
+}
+
+// ──────────────────────── Recipes (ingredient stock) ────────────────────────
+
+/// One ingredient of a product's base recipe, e.g. Latte uses 18 g coffee beans.
+model RecipeItem {
+  id           String  @id @default(uuid()) @db.Uuid
+  productId    String  @map("product_id") @db.Uuid
+  ingredientId String  @map("ingredient_id") @db.Uuid
+  quantity     Decimal @db.Decimal(14, 4) // in the ingredient's unit (g, ml, pcs)
+
+  product    Product @relation("RecipeOf", fields: [productId], references: [id], onDelete: Cascade)
+  ingredient Product @relation("RecipeIngredient", fields: [ingredientId], references: [id])
+
+  @@unique([productId, ingredientId])
+  @@map("recipe_items")
+}
+
+enum RecipeEffectType {
+  SCALE // percent change: all ingredients except pieces (cups, lids), or only `ingredientId`
+  REPLACE // use `replaceWithId` instead of `ingredientId` (oat milk instead of fresh milk)
+  ADD // add `quantity` of `ingredientId` (extra shot, whipped cream)
+}
+
+/// How a drink option changes the recipe. Applies to every product that offers the option.
+model ModifierEffect {
+  id            String           @id @default(uuid()) @db.Uuid
+  optionId      String           @map("option_id") @db.Uuid
+  type          RecipeEffectType
+  ingredientId  String?          @map("ingredient_id") @db.Uuid
+  replaceWithId String?          @map("replace_with_id") @db.Uuid
+  quantity      Decimal?         @db.Decimal(14, 4)
+  percent       Decimal?         @db.Decimal(7, 2) // +30 = 30% more, -50 = half
+
+  option ModifierOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+
+  @@index([optionId])
+  @@map("modifier_effects")
 }

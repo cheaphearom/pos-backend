@@ -343,5 +343,31 @@ ok((await fetch(B + '/public/stores/PP02/board')).status === 404, 'board only fo
 const shopSale = await call('POST', '/sales', { token: admin, body: { storeId: pp02.id, items: [{ productId: water.id, quantity: 1 }], payments: [{ method: 'CASH', amount: 1 }] } });
 ok(shopSale.j.queueNo === null && shopSale.j.kitchenStatus === 'NONE' && shopSale.j.orderType === 'RETAIL', 'normal shop (not café mode): no queue number, not sent to kitchen');
 
+// ── Recipes & ingredient stock ──
+const stockOf = async (sku) => Number((await call('GET', `/products/lookup?code=${sku}&storeId=${pp01.id}`, { token: mgr })).j.stock);
+const ingSkus = ['IN-001', 'IN-002', 'IN-003', 'IN-007', 'IN-010', 'IN-011', 'IN-012'];
+const ingBefore = Object.fromEntries(await Promise.all(ingSkus.map(async (k) => [k, await stockOf(k)])));
+const rs = await latteSale([opt('Size', 'Large'), opt('Sugar', '50%'), opt('Milk', 'Oat milk'), opt('Extras', 'Extra shot')]);
+const ingAfter = Object.fromEntries(await Promise.all(ingSkus.map(async (k) => [k, await stockOf(k)])));
+const used = Object.fromEntries(ingSkus.map((k) => [k, Math.round((ingBefore[k] - ingAfter[k]) * 1000) / 1000]));
+// Latte: beans 18, milk 200, syrup 15, cup12, lid. Large +30% (not cups) + 16oz cup; 50% sugar; oat replaces milk; extra shot +9 g beans
+ok(used['IN-001'] === 32.4 && used['IN-003'] === 260 && used['IN-002'] === 0 && used['IN-007'] === 9.75 && used['IN-011'] === 1 && used['IN-010'] === 0 && used['IN-012'] === 1,
+  `Large oat latte + extra shot used: beans ${used['IN-001']} g, oat ${used['IN-003']} ml, fresh milk ${used['IN-002']}, syrup ${used['IN-007']} ml, 16oz cup ${used['IN-011']}, 12oz cup ${used['IN-010']}, lid ${used['IN-012']}`);
+ok(Math.abs(Number(rs.j.items[0].costPrice) - 1.6255) < 1e-6, `real recipe cost saved on the sale line: $${rs.j.items[0].costPrice} per cup`);
+const rlist = (await call('GET', '/recipes', { token: mgr })).j;
+const rl = rlist.find((r) => r.name === 'Latte');
+ok(rl && rl.recipeCost > 0 && rl.marginPercent > 50, `recipes list: Latte costs $${rl?.recipeCost} with default options, margin ${rl?.marginPercent}%`);
+const pv = (await call('GET', `/recipes/${latte.id}/preview?options=${opt('Size', 'Small')},${opt('Sugar', '0%')}`, { token: mgr })).j;
+ok(pv.usage.find((u) => u.name === 'Coffee beans').quantity === 14.4 && !pv.usage.some((u) => u.name === 'Sugar syrup'), 'preview: Small = 14.4 g beans, 0% sugar = no syrup');
+const beans = (await call('GET', `/products/lookup?code=IN-001&storeId=${pp01.id}`, { token: mgr })).j;
+ok((await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, items: [{ productId: beans.id, quantity: 1 }], payments: [{ method: 'CASH', amount: 1 }] } })).s === 400, 'ingredients cannot be sold at the POS');
+const catNow = (await call('GET', `/products/catalog?storeId=${pp01.id}`, { token: cashier })).j.products;
+ok(!catNow.some((x) => x.sku.startsWith('IN-')), 'POS catalogue hides ingredients');
+await call('POST', '/inventory/adjustments', { token: mgr, body: { storeId: pp01.id, type: 'ADJUSTMENT', items: [{ productId: (await call('GET', `/products/lookup?code=IN-003&storeId=${pp01.id}`, { token: mgr })).j.id, quantity: -(await stockOf('IN-003')) }], note: 'test: oat milk empty' } });
+const noOat = await latteSale([opt('Size', 'Medium'), opt('Sugar', '100%'), opt('Milk', 'Oat milk')]);
+ok(noOat.s === 201 && (await stockOf('IN-003')) === -200, 'oat milk at 0 does not block the sale (stock shows -200 ml)');
+const iu = (await call('GET', '/reports/ingredient-usage', { token: mgr })).j;
+ok(iu.data.some((r) => r.name === 'Coffee beans' && r.used > 0 && r.cost > 0), `ingredient usage report: ${iu.data.map((r) => `${r.name} ${r.used}${r.unit}`).slice(0, 3).join(', ')}…`);
+
 await new Promise((r) => setTimeout(r, 2500));
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

@@ -15,6 +15,7 @@ import { KhqrService } from '../payments/payments.module';
 import { WalletService } from '../wallet/wallet.service';
 import { CouponCheck, CouponsService } from '../coupons/coupons.module';
 import { VouchersService } from '../vouchers/vouchers.module';
+import { RecipesService } from '../recipes/recipes.module';
 import { REPORT_TIMEZONE } from '../config';
 import { CreateRefundDto, CreateSaleDto, SaleQueryDto } from './sales.dto';
 
@@ -42,6 +43,7 @@ export class SalesService {
     private readonly wallet: WalletService,
     private readonly coupons: CouponsService,
     private readonly vouchers: VouchersService,
+    private readonly recipes: RecipesService,
   ) {}
 
   /**
@@ -79,7 +81,7 @@ export class SalesService {
     for (const id of productIds) {
       const prod = byId.get(id);
       if (!prod) throw new BadRequestException(`Product ${id} not found`);
-      if (!prod.isActive) throw new BadRequestException(`Product ${prod.name} is not for sale`);
+      if (!prod.isActive || prod.isIngredient) throw new BadRequestException(`Product ${prod.name} is not for sale`);
     }
 
     // Drink options: check them against the product's option groups and add their prices.
@@ -112,6 +114,9 @@ export class SalesService {
       const modifiers = chosen.map((o) => ({ id: o.id, group: o.group.name, option: o.name, price: o.priceDelta.toString() }));
       return { item: i, prod, unitPrice, modifiers };
     });
+
+    // Recipes: what each line uses up (beans, milk, cups...) and its real cost per unit.
+    const usage = await this.recipes.usageForLines(baseLines.map((l) => ({ productId: l.prod.id, optionIds: l.modifiers.map((m) => m.id) })));
 
     // Promotions: same engine as the POS, evaluated at the time of sale (offline sales: when they happened).
     const promoResults = applyPromotions(
@@ -234,7 +239,7 @@ export class SalesService {
                   name: l.prod.name,
                   quantity: l.item.quantity,
                   unitPrice: l.unitPrice,
-                  costPrice: l.prod.costPrice,
+                  costPrice: usage[i].unitCost !== null ? D(usage[i].unitCost!).toDecimalPlaces(6) : l.prod.costPrice,
                   discount: priced.lines[i].discount,
                   promotionId: l.promotionId,
                   promoDiscount: l.promo,
@@ -262,21 +267,35 @@ export class SalesService {
             await this.wallet.debitForSale(tx, pay.reference!, pay.amount, { saleId: created.id, storeId: dto.storeId, shiftId: shift?.id, userId, receiptNo });
           }
 
-          // 3. Take items out of stock. Sorted by product so concurrent sales lock rows in the same order (no deadlocks).
-          const toDeduct = lines.filter((l) => l.prod.trackStock).sort((a, b) => a.prod.id.localeCompare(b.prod.id));
+          // 3. Take items and recipe ingredients out of stock, one change per product, sorted by
+          //    product id so concurrent sales lock rows in the same order (no deadlocks).
+          //    A missing ingredient never blocks a sale: its stock may go below zero (and shows as low).
+          const deduct = new Map<string, { qty: Prisma.Decimal; sold: boolean; recipe: boolean }>();
+          const bump = (id: string, q: Prisma.Decimal.Value, kind: 'sold' | 'recipe') => {
+            const e = deduct.get(id) ?? { qty: D(0), sold: false, recipe: false };
+            e.qty = e.qty.plus(q);
+            e[kind] = true;
+            deduct.set(id, e);
+          };
+          lines.forEach((l, i) => {
+            if (l.prod.trackStock) bump(l.prod.id, l.item.quantity, 'sold');
+            for (const [ingId, perUnit] of usage[i].perUnit) bump(ingId, D(perUnit).mul(l.item.quantity).toDecimalPlaces(3), 'recipe');
+          });
           stockResults = [];
-          for (const l of toDeduct) {
+          for (const [productId, d] of [...deduct].sort(([a], [b]) => a.localeCompare(b))) {
+            if (d.qty.isZero()) continue;
             stockResults.push(
               await this.stock.apply(tx, {
                 storeId: dto.storeId,
-                productId: l.prod.id,
-                delta: -l.item.quantity,
-                type: 'SALE',
+                productId,
+                delta: d.qty.neg(),
+                type: d.sold ? 'SALE' : 'RECIPE',
                 referenceType: 'SALE',
-                referenceId: receiptNo,
+                referenceId: queueNo ? `${receiptNo} (${queueNo})` : receiptNo,
                 userId,
-                // An offline sale already happened in the real world; never reject it for stock.
-                ...(offlineAt && { allowNegative: true, note: 'Offline sale' }),
+                // Offline sales already happened in the real world, and ingredients never block a sale.
+                ...((offlineAt || !d.sold) && { allowNegative: true }),
+                ...(offlineAt && { note: 'Offline sale' }),
               }),
             );
           }
