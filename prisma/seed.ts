@@ -196,16 +196,16 @@ async function main() {
     for (const [sku, name, price, groups] of drinks) {
       await prisma.product.create({
         data: {
-          sku, name, sellPrice: price, costPrice: Math.round(price * 0.3 * 100) / 100, unit: 'cup', trackStock: false, categoryId: coffee.id,
+          sku, name, sellPrice: price, costPrice: Math.round(price * 0.3 * 100) / 100, unit: 'cup', trackStock: false, categoryId: coffee.id, onlineAvailable: true,
           modifierGroups: { create: groups.map((groupId, i) => ({ groupId, sortOrder: i })) },
         },
       });
     }
     for (const [sku, name, price] of [['BK-001', 'Butter Croissant', 1.5], ['BK-002', 'Chocolate Muffin', 1.8]] as const) {
-      const p = await prisma.product.create({ data: { sku, name, sellPrice: price, costPrice: price * 0.4, unit: 'pcs', categoryId: bakery.id, taxable: true } });
+      const p = await prisma.product.create({ data: { sku, name, sellPrice: price, costPrice: price * 0.4, unit: 'pcs', categoryId: bakery.id, taxable: true, onlineAvailable: true } });
       for (const st of stores) await prisma.inventory.create({ data: { storeId: st.id, productId: p.id, quantity: 30, reorderLevel: 5 } });
     }
-    await prisma.store.update({ where: { code: 'PP01' }, data: { hasKitchen: true } });
+    await prisma.store.update({ where: { code: 'PP01' }, data: { hasKitchen: true, onlineOrdering: true } });
 
     // Ingredients & supplies (cost per g / ml / piece) with stock in every store
     const ingCat = await prisma.category.create({ data: { name: 'Ingredients' } });
@@ -261,6 +261,7 @@ async function main() {
     await prisma.modifierEffect.createMany({ data: effects.map(([optionId, e]) => ({ optionId, ...(e as any) })) });
     // Medium is the base recipe, so it has no effect.
     void ice;
+    console.log('Online ordering: /order/PP01 (pickup) and /order/PP01?table=5 (table QR).');
     console.log('Café: PP01 is in café mode. Drinks CF-001..CF-006 with Size/Sugar/Ice/Milk/Extras; bakery BK-001, BK-002.');
   }
 

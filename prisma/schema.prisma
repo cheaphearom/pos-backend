@@ -93,6 +93,8 @@ model Store {
 
   /// Café mode: orders get a queue number and go to the barista / kitchen screen
   hasKitchen Boolean @default(false) @map("has_kitchen")
+  /// Customers can order on their phone (pickup, or by scanning a table QR code)
+  onlineOrdering Boolean @default(false) @map("online_ordering")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -193,6 +195,8 @@ model Product {
   imageUrl    String?  @map("image_url")
   /// Ingredient / supply (beans, milk, cups): kept in stock, used by recipes, not sold at the POS
   isIngredient Boolean @default(false) @map("is_ingredient")
+  /// Shown on the online ordering menu
+  onlineAvailable Boolean @default(false) @map("online_available")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
@@ -1011,4 +1015,38 @@ model ModifierEffect {
 
   @@index([optionId])
   @@map("modifier_effects")
+}
+
+// ──────────────────────── Online orders (order ahead / table QR) ────────────────────────
+
+enum OnlineOrderStatus {
+  PENDING_PAYMENT // waiting for the KHQR payment
+  PAY_AT_COUNTER // customer pays the cashier
+  PAID // became a sale and went to the barista
+  CANCELLED
+  EXPIRED // not paid in time
+  FAILED // payment received but the sale could not be created (needs a manager)
+}
+
+model OnlineOrder {
+  id           String            @id @default(uuid()) @db.Uuid
+  token        String            @unique @db.VarChar(48) // secret link for the customer's status page
+  storeId      String            @map("store_id") @db.Uuid
+  status       OnlineOrderStatus
+  orderType    OrderType         @map("order_type")
+  tableNo      String?           @map("table_no") @db.VarChar(20)
+  customerName String            @map("customer_name") @db.VarChar(80)
+  phone        String?           @db.VarChar(30)
+  note         String?           @db.VarChar(200)
+  items        Json // what the customer ordered (product, quantity, options, note)
+  couponCode   String?           @map("coupon_code") @db.VarChar(40)
+  total        Decimal           @db.Decimal(14, 2) // quoted when ordered
+  khqrMd5      String?           @map("khqr_md5") @db.VarChar(32)
+  saleId       String?           @unique @map("sale_id") @db.Uuid
+  error        String?
+  createdAt    DateTime          @default(now()) @map("created_at")
+  paidAt       DateTime?         @map("paid_at")
+
+  @@index([storeId, status, createdAt])
+  @@map("online_orders")
 }

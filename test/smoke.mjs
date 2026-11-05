@@ -369,5 +369,51 @@ ok(noOat.s === 201 && (await stockOf('IN-003')) === -200, 'oat milk at 0 does no
 const iu = (await call('GET', '/reports/ingredient-usage', { token: mgr })).j;
 ok(iu.data.some((r) => r.name === 'Coffee beans' && r.used > 0 && r.cost > 0), `ingredient usage report: ${iu.data.map((r) => `${r.name} ${r.used}${r.unit}`).slice(0, 3).join(', ')}…`);
 
+// ── Online ordering (order ahead / table QR) ──
+const pubCall = async (method, path, body) => { const r = await fetch(B + '/public' + path, { method, headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }); return { s: r.status, j: await r.json().catch(() => null) }; };
+const menu = await pubCall('GET', '/stores/PP01/menu');
+ok(menu.s === 200 && menu.j.products.length === 8 && menu.j.products.every((x) => !x.name.startsWith('Mineral')) && menu.j.groups.length >= 5, `online menu: ${menu.j.products?.length} items (café drinks + bakery), ${menu.j.groups?.length} option groups`);
+ok((await pubCall('GET', '/stores/PP02/menu')).s === 404, 'store without online ordering -> 404');
+const croissant = menu.j.products.find((x) => x.name === 'Butter Croissant');
+const onlineItems = [{ productId: latte.id, quantity: 1, modifiers: [opt('Size', 'Large'), opt('Sugar', '50%'), opt('Milk', 'Oat milk')], note: 'less ice' }, { productId: croissant.id, quantity: 2 }];
+const q1 = await pubCall('POST', '/stores/PP01/quote', { items: onlineItems });
+// Latte 2.30 + 1.00 + 0.60 = 3.90 (+0.39 tax) ; croissant 2 x 1.50 = 3.00 (+0.30 tax) => 7.59
+ok(q1.s === 200 && q1.j.total === '7.59', `online quote uses the same pricing as the POS: ${q1.j.total}`);
+ok((await pubCall('POST', '/stores/PP01/quote', { items: [{ productId: water.id, quantity: 1 }] })).s === 400, 'products not sold online cannot be ordered');
+const o1 = await pubCall('POST', '/stores/PP01/orders', { items: onlineItems, customerName: 'Sophea', phone: '012345678', payMethod: 'KHQR', tableNo: '3' });
+ok(o1.s === 201 && o1.j.token.length > 20, 'KHQR order placed, secret status link returned');
+const st1 = await pubCall('GET', `/orders/${o1.j.token}`);
+ok(st1.j.status === 'PENDING_PAYMENT' && st1.j.orderType === 'DINE_IN' && st1.j.phone === undefined && st1.j.id === undefined, 'status page: waiting for payment, dine-in table 3, no phone or ids shown');
+ok((await pubCall('GET', `/orders/${o1.j.token}/khqr`)).j.qr.startsWith('000201010212'), 'customer gets the KHQR for the exact amount');
+const openList = (await call('GET', `/online-orders?storeId=${pp01.id}`, { token: cashier })).j;
+const mine1 = openList.find((x) => x.customerName === 'Sophea');
+ok(!!mine1 && mine1.phone === '012345678', 'POS sees the online order waiting for payment');
+const custBefore = (await call('GET', '/customers/lookup?code=012345678', { token: cashier })).j.points;
+const conf = await call('POST', `/online-orders/${mine1.id}/confirm-payment`, { token: cashier });
+ok(conf.s === 201 && conf.j.status === 'PAID' && conf.j.saleId, 'cashier confirms the KHQR payment -> order paid');
+const st2 = await pubCall('GET', `/orders/${o1.j.token}`);
+ok(st2.j.status === 'PAID' && st2.j.queueNo?.startsWith('A') && st2.j.kitchenStatus === 'NEW', `customer sees queue number ${st2.j.queueNo}, being prepared`);
+const kOnline = (await call('GET', `/kitchen/orders?storeId=${pp01.id}`, { token: cashier })).j.orders.find((x) => x.id === conf.j.saleId);
+ok(kOnline && kOnline.channel === 'ONLINE' && kOnline.tableNo === '3' && kOnline.note.includes('Sophea') && kOnline.items[0].note === 'less ice', 'barista screen shows the online order (name, table 3, note)');
+ok((await call('GET', '/customers/lookup?code=012345678', { token: cashier })).j.points > custBefore, 'member phone number earns loyalty points');
+await call('POST', `/kitchen/orders/${conf.j.saleId}/status`, { token: cashier, body: { status: 'PREPARING' } });
+await call('POST', `/kitchen/orders/${conf.j.saleId}/status`, { token: cashier, body: { status: 'READY' } });
+ok((await pubCall('GET', `/orders/${o1.j.token}`)).j.kitchenStatus === 'READY', 'status page shows READY when the barista is done');
+// Pay at counter
+const o2 = await pubCall('POST', '/stores/PP01/orders', { items: [{ productId: croissant.id, quantity: 1 }], customerName: 'Walk-in Web', payMethod: 'COUNTER' });
+const o2row = (await call('GET', `/online-orders?storeId=${pp01.id}`, { token: cashier })).j.find((x) => x.customerName === 'Walk-in Web');
+ok(o2row?.status === 'PAY_AT_COUNTER' && (await pubCall('GET', `/orders/${o2.j.token}`)).j.status === 'PAY_AT_COUNTER', 'pay-at-counter order waits for the cashier');
+const o2full = (await call('GET', `/online-orders/${o2row.id}`, { token: cashier })).j;
+const counterSale = () => call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, onlineOrderId: o2row.id, orderType: 'PICKUP', items: o2full.request, payments: [{ method: 'CASH', amount: 5 }] } });
+const cs1 = await counterSale();
+ok(cs1.s === 201 && (await pubCall('GET', `/orders/${o2.j.token}`)).j.status === 'PAID', 'cashier takes payment at the POS -> online order paid');
+ok((await counterSale()).j.message === 'This online order was already paid or cancelled', 'the same online order cannot be paid twice');
+const o3 = await pubCall('POST', '/stores/PP01/orders', { items: [{ productId: croissant.id, quantity: 1 }], customerName: 'Cancel me', payMethod: 'COUNTER' });
+const o3row = (await call('GET', `/online-orders?storeId=${pp01.id}`, { token: cashier })).j.find((x) => x.customerName === 'Cancel me');
+await call('POST', `/online-orders/${o3row.id}/cancel`, { token: cashier });
+ok((await pubCall('GET', `/orders/${o3.j.token}`)).j.status === 'CANCELLED', 'cancelled order shows as cancelled');
+ok((await pubCall('GET', '/orders/not-a-real-token')).s === 404, 'unknown order link -> 404');
+ok((await pubCall('POST', '/stores/PP01/orders', { items: [{ productId: croissant.id, quantity: 1 }], customerName: '', payMethod: 'KHQR' })).s === 400, 'order without a name rejected');
+
 await new Promise((r) => setTimeout(r, 2500));
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

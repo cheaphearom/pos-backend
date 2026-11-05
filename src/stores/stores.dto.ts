@@ -46,6 +46,10 @@ export class CreateStoreDto {
   /** Café mode: queue numbers, order types and the barista / kitchen screen */
   @IsOptional() @IsBoolean()
   hasKitchen?: boolean;
+
+  /** Customers can order on their phone (pickup or table QR) */
+  @IsOptional() @IsBoolean()
+  onlineOrdering?: boolean;
 }
 
 export class UpdateStoreDto extends PartialType(CreateStoreDto) {

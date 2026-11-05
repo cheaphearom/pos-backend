@@ -76,6 +76,10 @@ export class CreateSaleDto {
   @IsOptional() @IsString() @MaxLength(64)
   clientRef?: string;
 
+  /** Completes a "pay at counter" online order (POS loads it into the cart) */
+  @IsOptional() @IsUUID()
+  onlineOrderId?: string;
+
   /** Café: TAKEAWAY, DINE_IN, PICKUP, DELIVERY (default RETAIL) */
   @IsOptional() @IsEnum(OrderType)
   orderType?: OrderType;

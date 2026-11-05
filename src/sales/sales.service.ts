@@ -71,88 +71,7 @@ export class SalesService {
     const store = await this.prisma.store.findUniqueOrThrow({ where: { id: dto.storeId } });
     if (!store.isActive) throw new BadRequestException('Store is inactive');
 
-    // Load products with this store's price.
-    const productIds = [...new Set(dto.items.map((i) => i.productId))];
-    const products = await this.prisma.product.findMany({
-      where: { id: { in: productIds } },
-      include: { inventory: { where: { storeId: dto.storeId }, select: { priceOverride: true } } },
-    });
-    const byId = new Map(products.map((x) => [x.id, x]));
-    for (const id of productIds) {
-      const prod = byId.get(id);
-      if (!prod) throw new BadRequestException(`Product ${id} not found`);
-      if (!prod.isActive || prod.isIngredient) throw new BadRequestException(`Product ${prod.name} is not for sale`);
-    }
-
-    // Drink options: check them against the product's option groups and add their prices.
-    const optionIds = [...new Set(dto.items.flatMap((i) => i.modifiers ?? []))];
-    const options = optionIds.length
-      ? await this.prisma.modifierOption.findMany({ where: { id: { in: optionIds } }, include: { group: true } })
-      : [];
-    const optionById = new Map(options.map((o) => [o.id, o]));
-    const groupsByProduct = new Map<string, { groupId: string; group: { name: string; minSelect: number; maxSelect: number; isActive: boolean } }[]>();
-    const links = await this.prisma.productModifierGroup.findMany({ where: { productId: { in: productIds } }, include: { group: true } });
-    for (const l of links) groupsByProduct.set(l.productId, [...(groupsByProduct.get(l.productId) ?? []), l]);
-
-    const baseLines = dto.items.map((i) => {
-      const prod = byId.get(i.productId)!;
-      const allowed = (groupsByProduct.get(prod.id) ?? []).filter((g) => g.group.isActive);
-      const chosen = (i.modifiers ?? []).map((id) => {
-        const o = optionById.get(id);
-        if (!o || !o.isActive) throw new BadRequestException(`Option ${id} is not available`);
-        if (!allowed.some((g) => g.groupId === o.groupId)) throw new BadRequestException(`"${o.name}" is not an option of ${prod.name}`);
-        return o;
-      });
-      for (const g of allowed) {
-        const n = chosen.filter((o) => o.groupId === g.groupId).length;
-        if (n < g.group.minSelect) throw new BadRequestException(`Choose ${g.group.name} for ${prod.name}`);
-        if (n > g.group.maxSelect) throw new BadRequestException(`Choose at most ${g.group.maxSelect} for ${g.group.name} (${prod.name})`);
-      }
-      const extra = chosen.reduce((t, o) => t.plus(o.priceDelta), D(0));
-      const unitPrice = (prod.inventory[0]?.priceOverride ?? prod.sellPrice).plus(extra);
-      if (unitPrice.isNegative()) throw new BadRequestException(`Options make ${prod.name} cost less than zero`);
-      const modifiers = chosen.map((o) => ({ id: o.id, group: o.group.name, option: o.name, price: o.priceDelta.toString() }));
-      return { item: i, prod, unitPrice, modifiers };
-    });
-
-    // Recipes: what each line uses up (beans, milk, cups...) and its real cost per unit.
-    const usage = await this.recipes.usageForLines(baseLines.map((l) => ({ productId: l.prod.id, optionIds: l.modifiers.map((m) => m.id) })));
-
-    // Promotions: same engine as the POS, evaluated at the time of sale (offline sales: when they happened).
-    const promoResults = applyPromotions(
-      baseLines.map((l) => ({ productId: l.prod.id, categoryId: l.prod.categoryId, price: l.unitPrice.toString(), quantity: l.item.quantity })),
-      await this.promotions.forStore(dto.storeId),
-      dto.storeId,
-      offlineAt ?? new Date(),
-      REPORT_TIMEZONE,
-    );
-    const lines = baseLines.map((l, i) => {
-      const promo = D(promoResults[i].discount);
-      const gross = l.unitPrice.mul(l.item.quantity).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
-      // Manual line discount on top of a promotion can never make the line negative.
-      const manual = Prisma.Decimal.min(D(l.item.discount ?? 0), gross.minus(promo));
-      return { ...l, promo, promotionId: promoResults[i].promotionId, lineDiscount: promo.plus(manual) };
-    });
-
-    // Coupon: checked here (clear errors), counted inside the transaction.
-    let coupon: (CouponCheck & { discount: number }) | null = null;
-    if (dto.couponCode) {
-      if (offlineAt) throw new BadRequestException('Coupons need a connection and cannot be used offline');
-      const base = lines.reduce((t, l) => t.plus(l.unitPrice.mul(l.item.quantity).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).minus(l.lineDiscount)), D(0));
-      coupon = await this.coupons.check(dto.couponCode, { storeId: dto.storeId, customerId: dto.customerId, base: base.toNumber() });
-    }
-
-    let priced;
-    try {
-      priced = priceSale(
-        lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.item.quantity, discount: l.lineDiscount, taxable: l.prod.taxable })),
-        store.taxRate,
-        { amount: D(dto.discount ?? 0).plus(coupon?.discount ?? 0).toNumber() || undefined, percent: dto.discountPercent },
-      );
-    } catch (e) {
-      if (e instanceof PricingError) throw new BadRequestException(e.message);
-      throw e;
-    }
+    const { lines, usage, coupon, priced } = await this.buildPricing(dto, store, offlineAt);
 
     // Loyalty redemption reduces the amount the customer has to pay.
     let pointsDiscount = ZERO;
@@ -256,6 +175,13 @@ export class SalesService {
           // KHQR payments must really be paid and can pay for one sale only.
           await this.khqr.claimForSale(tx, created.id, dto.storeId, dto.payments);
 
+          if (dto.onlineOrderId) {
+            const done = await tx.onlineOrder.updateMany({
+              where: { id: dto.onlineOrderId, storeId: dto.storeId, status: { in: ['PAY_AT_COUNTER', 'PENDING_PAYMENT', 'FAILED'] } },
+              data: { status: 'PAID', saleId: created.id, paidAt: new Date(), error: null },
+            });
+            if (!done.count) throw new BadRequestException('This online order was already paid or cancelled');
+          }
           if (coupon) await this.coupons.redeem(tx, coupon, { saleId: created.id, storeId: dto.storeId, customerId: dto.customerId, discount: coupon.discount });
           for (const pay of dto.payments.filter((x) => x.method === 'VOUCHER')) {
             if (!pay.reference) throw new BadRequestException('Scan the voucher code');
@@ -328,6 +254,118 @@ export class SalesService {
     await this.webhooks.emit('sale.created', sale);
     await this.inventory.emitLowStock(stockResults);
     return sale;
+  }
+
+  /**
+   * Prices a basket exactly like checkout does: store prices, drink options, recipes,
+   * promotions, coupon and tax. Used by checkout and by the online-order quote.
+   * `online` = only products available for online ordering.
+   */
+  private async buildPricing(
+    dto: Pick<CreateSaleDto, 'storeId' | 'items' | 'couponCode' | 'customerId' | 'discount' | 'discountPercent'>,
+    store: { taxRate: Prisma.Decimal },
+    offlineAt?: Date,
+    opts: { online?: boolean } = {},
+  ) {
+    // Load products with this store's price.
+    const productIds = [...new Set(dto.items.map((i) => i.productId))];
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: productIds } },
+      include: { inventory: { where: { storeId: dto.storeId }, select: { priceOverride: true } } },
+    });
+    const byId = new Map(products.map((x) => [x.id, x]));
+    for (const id of productIds) {
+      const prod = byId.get(id);
+      if (!prod) throw new BadRequestException(`Product ${id} not found`);
+      if (!prod.isActive || prod.isIngredient) throw new BadRequestException(`Product ${prod.name} is not for sale`);
+      if (opts.online && !prod.onlineAvailable) throw new BadRequestException(`${prod.name} cannot be ordered online`);
+    }
+
+    // Drink options: check them against the product's option groups and add their prices.
+    const optionIds = [...new Set(dto.items.flatMap((i) => i.modifiers ?? []))];
+    const options = optionIds.length
+      ? await this.prisma.modifierOption.findMany({ where: { id: { in: optionIds } }, include: { group: true } })
+      : [];
+    const optionById = new Map(options.map((o) => [o.id, o]));
+    const groupsByProduct = new Map<string, { groupId: string; group: { name: string; minSelect: number; maxSelect: number; isActive: boolean } }[]>();
+    const links = await this.prisma.productModifierGroup.findMany({ where: { productId: { in: productIds } }, include: { group: true } });
+    for (const l of links) groupsByProduct.set(l.productId, [...(groupsByProduct.get(l.productId) ?? []), l]);
+
+    const baseLines = dto.items.map((i) => {
+      const prod = byId.get(i.productId)!;
+      const allowed = (groupsByProduct.get(prod.id) ?? []).filter((g) => g.group.isActive);
+      const chosen = (i.modifiers ?? []).map((id) => {
+        const o = optionById.get(id);
+        if (!o || !o.isActive) throw new BadRequestException(`Option ${id} is not available`);
+        if (!allowed.some((g) => g.groupId === o.groupId)) throw new BadRequestException(`"${o.name}" is not an option of ${prod.name}`);
+        return o;
+      });
+      for (const g of allowed) {
+        const n = chosen.filter((o) => o.groupId === g.groupId).length;
+        if (n < g.group.minSelect) throw new BadRequestException(`Choose ${g.group.name} for ${prod.name}`);
+        if (n > g.group.maxSelect) throw new BadRequestException(`Choose at most ${g.group.maxSelect} for ${g.group.name} (${prod.name})`);
+      }
+      const extra = chosen.reduce((t, o) => t.plus(o.priceDelta), D(0));
+      const unitPrice = (prod.inventory[0]?.priceOverride ?? prod.sellPrice).plus(extra);
+      if (unitPrice.isNegative()) throw new BadRequestException(`Options make ${prod.name} cost less than zero`);
+      const modifiers = chosen.map((o) => ({ id: o.id, group: o.group.name, option: o.name, price: o.priceDelta.toString() }));
+      return { item: i, prod, unitPrice, modifiers };
+    });
+
+    // Recipes: what each line uses up (beans, milk, cups...) and its real cost per unit.
+    const usage = await this.recipes.usageForLines(baseLines.map((l) => ({ productId: l.prod.id, optionIds: l.modifiers.map((m) => m.id) })));
+
+    // Promotions: same engine as the POS, evaluated at the time of sale (offline sales: when they happened).
+    const promoResults = applyPromotions(
+      baseLines.map((l) => ({ productId: l.prod.id, categoryId: l.prod.categoryId, price: l.unitPrice.toString(), quantity: l.item.quantity })),
+      await this.promotions.forStore(dto.storeId),
+      dto.storeId,
+      offlineAt ?? new Date(),
+      REPORT_TIMEZONE,
+    );
+    const lines = baseLines.map((l, i) => {
+      const promo = D(promoResults[i].discount);
+      const gross = l.unitPrice.mul(l.item.quantity).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+      // Manual line discount on top of a promotion can never make the line negative.
+      const manual = Prisma.Decimal.min(D(l.item.discount ?? 0), gross.minus(promo));
+      return { ...l, promo, promotionId: promoResults[i].promotionId, lineDiscount: promo.plus(manual) };
+    });
+
+    // Coupon: checked here (clear errors), counted inside the transaction.
+    let coupon: (CouponCheck & { discount: number }) | null = null;
+    if (dto.couponCode) {
+      if (offlineAt) throw new BadRequestException('Coupons need a connection and cannot be used offline');
+      const base = lines.reduce((t, l) => t.plus(l.unitPrice.mul(l.item.quantity).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).minus(l.lineDiscount)), D(0));
+      coupon = await this.coupons.check(dto.couponCode, { storeId: dto.storeId, customerId: dto.customerId, base: base.toNumber() });
+    }
+
+    let priced;
+    try {
+      priced = priceSale(
+        lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.item.quantity, discount: l.lineDiscount, taxable: l.prod.taxable })),
+        store.taxRate,
+        { amount: D(dto.discount ?? 0).plus(coupon?.discount ?? 0).toNumber() || undefined, percent: dto.discountPercent },
+      );
+    } catch (e) {
+      if (e instanceof PricingError) throw new BadRequestException(e.message);
+      throw e;
+    }
+
+    return { lines, usage, coupon, priced: priced! };
+  }
+
+  /** Price a basket without saving anything (online ordering shows this before payment). */
+  async quote(dto: Pick<CreateSaleDto, 'storeId' | 'items' | 'couponCode' | 'customerId'>, opts: { online?: boolean } = {}) {
+    const store = await this.prisma.store.findUniqueOrThrow({ where: { id: dto.storeId } });
+    const { lines, priced, coupon } = await this.buildPricing(dto, store, undefined, opts);
+    return {
+      lines: lines.map((l, i) => ({
+        productId: l.prod.id, name: l.prod.name, quantity: l.item.quantity, unitPrice: l.unitPrice, modifiers: l.modifiers, note: l.item.note ?? null,
+        promotion: l.promotionId ? { id: l.promotionId, discount: l.promo } : null, total: priced.lines[i].total,
+      })),
+      subtotal: priced.subtotal, discountTotal: priced.discountTotal, taxTotal: priced.taxTotal, total: priced.total,
+      coupon: coupon ? { code: coupon.code.code, name: coupon.campaign.name, discount: coupon.discount } : null,
+    };
   }
 
   async list(p: Principal, q: SaleQueryDto) {

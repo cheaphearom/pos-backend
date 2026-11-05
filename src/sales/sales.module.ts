@@ -7,5 +7,5 @@ import { VouchersModule } from '../vouchers/vouchers.module';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
 
-@Module({ imports: [PromotionsModule, PaymentsModule, WalletModule, CouponsModule, VouchersModule], controllers: [SalesController], providers: [SalesService] })
+@Module({ imports: [PromotionsModule, PaymentsModule, WalletModule, CouponsModule, VouchersModule], controllers: [SalesController], providers: [SalesService], exports: [SalesService] })
 export class SalesModule {}

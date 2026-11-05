@@ -42,6 +42,10 @@ export class CreateProductDto {
   @IsOptional() @IsBoolean()
   isIngredient?: boolean;
 
+  /** Shown on the online ordering menu */
+  @IsOptional() @IsBoolean()
+  onlineAvailable?: boolean;
+
   /** Picture shown on the POS tile and online menu */
   @IsOptional() @ValidateIf((_, v) => v !== null && v !== '') @IsUrl({ require_tld: false })
   imageUrl?: string | null;
