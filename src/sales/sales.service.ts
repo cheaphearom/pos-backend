@@ -9,6 +9,10 @@ import { MovementResult, StockService } from '../inventory/stock.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { priceSale, PricingError } from './pricing';
+import { applyPromotions } from '../promotions/engine';
+import { PromotionsService } from '../promotions/promotions.module';
+import { KhqrService } from '../payments/payments.module';
+import { REPORT_TIMEZONE } from '../config';
 import { CreateRefundDto, CreateSaleDto, SaleQueryDto } from './sales.dto';
 
 const D = (v: Prisma.Decimal.Value) => new Prisma.Decimal(v);
@@ -18,7 +22,7 @@ const receiptInclude = {
   store: { select: { id: true, code: true, name: true, address: true, phone: true, currency: true } },
   cashier: { select: { id: true, fullName: true } },
   customer: { select: { id: true, code: true, name: true, phone: true, points: true } },
-  items: { orderBy: { lineNo: 'asc' } },
+  items: { orderBy: { lineNo: 'asc' }, include: { promotion: { select: { id: true, name: true } } } },
   payments: true,
   refunds: { include: { items: true } },
 } satisfies Prisma.SaleInclude;
@@ -30,6 +34,8 @@ export class SalesService {
     private readonly stock: StockService,
     private readonly inventory: InventoryService,
     private readonly webhooks: WebhooksService,
+    private readonly promotions: PromotionsService,
+    private readonly khqr: KhqrService,
   ) {}
 
   /**
@@ -70,15 +76,31 @@ export class SalesService {
       if (!prod.isActive) throw new BadRequestException(`Product ${prod.name} is not for sale`);
     }
 
-    const lines = dto.items.map((i) => {
+    const baseLines = dto.items.map((i) => {
       const prod = byId.get(i.productId)!;
       return { item: i, prod, unitPrice: prod.inventory[0]?.priceOverride ?? prod.sellPrice };
+    });
+
+    // Promotions: same engine as the POS, evaluated at the time of sale (offline sales: when they happened).
+    const promoResults = applyPromotions(
+      baseLines.map((l) => ({ productId: l.prod.id, categoryId: l.prod.categoryId, price: l.unitPrice.toString(), quantity: l.item.quantity })),
+      await this.promotions.forStore(dto.storeId),
+      dto.storeId,
+      offlineAt ?? new Date(),
+      REPORT_TIMEZONE,
+    );
+    const lines = baseLines.map((l, i) => {
+      const promo = D(promoResults[i].discount);
+      const gross = l.unitPrice.mul(l.item.quantity).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+      // Manual line discount on top of a promotion can never make the line negative.
+      const manual = Prisma.Decimal.min(D(l.item.discount ?? 0), gross.minus(promo));
+      return { ...l, promo, promotionId: promoResults[i].promotionId, lineDiscount: promo.plus(manual) };
     });
 
     let priced;
     try {
       priced = priceSale(
-        lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.item.quantity, discount: l.item.discount, taxable: l.prod.taxable })),
+        lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.item.quantity, discount: l.lineDiscount, taxable: l.prod.taxable })),
         store.taxRate,
         { amount: dto.discount, percent: dto.discountPercent },
       );
@@ -150,6 +172,8 @@ export class SalesService {
                   unitPrice: l.unitPrice,
                   costPrice: l.prod.costPrice,
                   discount: priced.lines[i].discount,
+                  promotionId: l.promotionId,
+                  promoDiscount: l.promo,
                   taxRate: priced.lines[i].taxRate,
                   netAmount: priced.lines[i].net,
                   taxAmount: priced.lines[i].tax,
@@ -159,6 +183,9 @@ export class SalesService {
               payments: { create: dto.payments.map((x) => ({ method: x.method, amount: x.amount, reference: x.reference })) },
             },
           });
+
+          // KHQR payments must really be paid and can pay for one sale only.
+          await this.khqr.claimForSale(tx, created.id, dto.storeId, dto.payments);
 
           // 3. Take items out of stock. Sorted by product so concurrent sales lock rows in the same order (no deadlocks).
           const toDeduct = lines.filter((l) => l.prod.trackStock).sort((a, b) => a.prod.id.localeCompare(b.prod.id));

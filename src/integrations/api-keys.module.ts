@@ -20,6 +20,8 @@ export const API_SCOPES = [
   'sales:write',
   'sales:refund',
   'reports:read',
+  'purchasing:read',
+  'purchasing:write',
   '*',
 ] as const;
 

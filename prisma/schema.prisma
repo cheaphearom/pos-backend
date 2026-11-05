@@ -80,6 +80,13 @@ model Store {
   taxRate    Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 4) // 0.1000 = 10%
   receiptSeq Int      @default(0) @map("receipt_seq") // last used receipt number
   isActive   Boolean  @default(true) @map("is_active")
+
+  // KHQR (Bakong) settings. Without an account id, KHQR codes cannot be generated for this store.
+  khqrAccountId    String? @map("khqr_account_id") @db.VarChar(32) // e.g. myshop@aclb
+  khqrMerchantName String? @map("khqr_merchant_name") @db.VarChar(25)
+  khqrCity         String? @map("khqr_city") @db.VarChar(15)
+  khqrMerchantId   String? @map("khqr_merchant_id") @db.VarChar(32) // set for merchant accounts (tag 30)
+  khqrBank         String? @map("khqr_bank") @db.VarChar(32) // acquiring bank name
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -91,6 +98,8 @@ model Store {
   transfersOut   StockTransfer[] @relation("TransferFrom")
   transfersIn    StockTransfer[] @relation("TransferTo")
   apiKeys        ApiKey[]
+  purchaseOrders PurchaseOrder[]
+  khqrPayments   KhqrPayment[]
 
   @@map("stores")
 }
@@ -183,6 +192,7 @@ model Product {
   stockMovements StockMovement[]
   saleItems      SaleItem[]
   transferItems  StockTransferItem[]
+  poItems        PurchaseOrderItem[]
 
   @@index([categoryId])
   @@index([name])
@@ -378,13 +388,17 @@ model SaleItem {
   taxAmount    Decimal @map("tax_amount") @db.Decimal(14, 2)
   lineTotal    Decimal @map("line_total") @db.Decimal(14, 2) // net + tax
   refundedQty  Decimal @default(0) @map("refunded_qty") @db.Decimal(14, 3)
+  promotionId   String?  @map("promotion_id") @db.Uuid
+  promoDiscount Decimal  @default(0) @map("promo_discount") @db.Decimal(14, 2) // part of `discount` that came from the promotion
 
   sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  promotion   Promotion?   @relation(fields: [promotionId], references: [id], onDelete: SetNull)
   product     Product      @relation(fields: [productId], references: [id])
   refundItems RefundItem[]
 
   @@index([saleId])
   @@index([productId])
+  @@index([promotionId])
   @@map("sale_items")
 }
 
@@ -445,7 +459,7 @@ model ApiKey {
   name        String    @db.VarChar(100)
   prefix      String    @db.VarChar(16) // first chars, shown in UI to identify the key
   keyHash     String    @unique @map("key_hash")
-  scopes      String[]
+  scopes      String[]  @default([])
   storeId     String?   @map("store_id") @db.Uuid // null = all stores
   lastUsedAt  DateTime? @map("last_used_at")
   expiresAt   DateTime? @map("expires_at")
@@ -463,7 +477,7 @@ model WebhookEndpoint {
   id        String   @id @default(uuid()) @db.Uuid
   url       String
   secret    String // used to sign payloads (HMAC-SHA256)
-  events    String[]
+  events    String[] @default([])
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
 
@@ -488,4 +502,177 @@ model WebhookDelivery {
 
   @@index([endpointId, createdAt])
   @@map("webhook_deliveries")
+}
+
+// ──────────────────────── Purchasing ────────────────────────
+
+enum PurchaseOrderStatus {
+  DRAFT
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+model Supplier {
+  id               String   @id @default(uuid()) @db.Uuid
+  code             String   @unique @db.VarChar(30)
+  name             String   @db.VarChar(150)
+  contactName      String?  @map("contact_name") @db.VarChar(150)
+  phone            String?  @db.VarChar(30)
+  email            String?  @db.VarChar(150)
+  address          String?
+  taxId            String?  @map("tax_id") @db.VarChar(50)
+  paymentTermsDays Int      @default(0) @map("payment_terms_days")
+  note             String?
+  isActive         Boolean  @default(true) @map("is_active")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  purchaseOrders PurchaseOrder[]
+
+  @@index([name])
+  @@map("suppliers")
+}
+
+model PurchaseOrder {
+  id          String              @id @default(uuid()) @db.Uuid
+  poNo        String              @unique @map("po_no") @db.VarChar(40)
+  supplierId  String              @map("supplier_id") @db.Uuid
+  storeId     String              @map("store_id") @db.Uuid // delivery store
+  status      PurchaseOrderStatus @default(DRAFT)
+  expectedAt  DateTime?           @map("expected_at")
+  note        String?
+  subtotal    Decimal             @default(0) @db.Decimal(14, 2)
+  createdById String?             @map("created_by_id") @db.Uuid
+  orderedAt   DateTime?           @map("ordered_at")
+  receivedAt  DateTime?           @map("received_at")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  supplier Supplier            @relation(fields: [supplierId], references: [id])
+  store    Store               @relation(fields: [storeId], references: [id])
+  items    PurchaseOrderItem[]
+  receipts GoodsReceipt[]
+
+  @@index([storeId, createdAt])
+  @@index([supplierId, createdAt])
+  @@index([status])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              String  @id @default(uuid()) @db.Uuid
+  purchaseOrderId String  @map("purchase_order_id") @db.Uuid
+  lineNo          Int     @map("line_no")
+  productId       String  @map("product_id") @db.Uuid
+  quantity        Decimal @db.Decimal(14, 3)
+  unitCost        Decimal @map("unit_cost") @db.Decimal(14, 2)
+  receivedQty     Decimal @default(0) @map("received_qty") @db.Decimal(14, 3)
+
+  purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product       Product            @relation(fields: [productId], references: [id])
+  receiptItems  GoodsReceiptItem[]
+
+  @@index([purchaseOrderId])
+  @@map("purchase_order_items")
+}
+
+/// One delivery against a purchase order (a PO can arrive in several deliveries).
+model GoodsReceipt {
+  id              String   @id @default(uuid()) @db.Uuid
+  purchaseOrderId String   @map("purchase_order_id") @db.Uuid
+  reference       String?  @db.VarChar(100) // supplier invoice / delivery note number
+  note            String?
+  userId          String?  @map("user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  purchaseOrder PurchaseOrder      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  items         GoodsReceiptItem[]
+
+  @@index([purchaseOrderId])
+  @@map("goods_receipts")
+}
+
+model GoodsReceiptItem {
+  id                  String  @id @default(uuid()) @db.Uuid
+  goodsReceiptId      String  @map("goods_receipt_id") @db.Uuid
+  purchaseOrderItemId String  @map("purchase_order_item_id") @db.Uuid
+  quantity            Decimal @db.Decimal(14, 3)
+  unitCost            Decimal @map("unit_cost") @db.Decimal(14, 2)
+
+  goodsReceipt      GoodsReceipt      @relation(fields: [goodsReceiptId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
+
+  @@map("goods_receipt_items")
+}
+
+// ──────────────────────── Promotions ────────────────────────
+
+enum PromotionType {
+  PERCENT_OFF // value = percent, e.g. 10
+  AMOUNT_OFF // value = amount off each unit
+  BUY_X_GET_Y // buy `buyQty`, get `getQty` free (same product)
+}
+
+model Promotion {
+  id          String        @id @default(uuid()) @db.Uuid
+  name        String        @db.VarChar(100) // shown on receipts
+  description String?
+  type        PromotionType
+  value       Decimal       @default(0) @db.Decimal(14, 4)
+  buyQty      Int?          @map("buy_qty")
+  getQty      Int?          @map("get_qty")
+  allProducts Boolean       @default(false) @map("all_products")
+  productIds  String[]      @default([]) @map("product_ids")
+  categoryIds String[]      @default([]) @map("category_ids")
+  storeIds    String[]      @default([]) @map("store_ids") // empty = all stores
+  startsAt    DateTime?     @map("starts_at")
+  endsAt      DateTime?     @map("ends_at")
+  daysOfWeek  Int[]         @default([]) @map("days_of_week") // 0 = Sunday ... 6 = Saturday; empty = every day
+  startMinute Int?          @map("start_minute") // happy hour start, minutes after midnight (store time)
+  endMinute   Int?          @map("end_minute")
+  priority    Int           @default(0)
+  isActive    Boolean       @default(true) @map("is_active")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  saleItems SaleItem[]
+
+  @@index([isActive])
+  @@map("promotions")
+}
+
+// ──────────────────────── KHQR payments ────────────────────────
+
+enum KhqrStatus {
+  PENDING
+  PAID
+  EXPIRED
+}
+
+/// A dynamic KHQR code generated for one payment. md5 is what Bakong uses to look the payment up.
+model KhqrPayment {
+  id              String     @id @default(uuid()) @db.Uuid
+  md5             String     @unique @db.VarChar(32)
+  storeId         String     @map("store_id") @db.Uuid
+  amount          Decimal    @db.Decimal(14, 2)
+  currency        String     @db.VarChar(3)
+  billNumber      String     @map("bill_number") @db.VarChar(25)
+  qr              String
+  status          KhqrStatus @default(PENDING)
+  expiresAt       DateTime   @map("expires_at")
+  paidAt          DateTime?  @map("paid_at")
+  transactionHash String?    @map("transaction_hash") @db.VarChar(100)
+  fromAccount     String?    @map("from_account") @db.VarChar(100)
+  confirmedById   String?    @map("confirmed_by_id") @db.Uuid // set when confirmed by hand
+  lastCheckedAt   DateTime?  @map("last_checked_at")
+  saleId          String?    @unique @map("sale_id") @db.Uuid // a payment can pay for one sale only
+  createdById     String?    @map("created_by_id") @db.Uuid
+  createdAt       DateTime   @default(now()) @map("created_at")
+
+  store Store @relation(fields: [storeId], references: [id])
+
+  @@index([storeId, createdAt])
+  @@map("khqr_payments")
 }

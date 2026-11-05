@@ -1,4 +1,12 @@
 /** Central, typed access to environment variables. */
+
+// Load apps/api/.env (variables already set, e.g. by Docker, are kept).
+try {
+  process.loadEnvFile();
+} catch {
+  /* no .env file: use the real environment */
+}
+
 const num = (v: string | undefined, d: number) => (v === undefined || v === '' ? d : Number(v));
 
 export const config = {
@@ -21,3 +29,15 @@ if (config.nodeEnv === 'production' && config.jwtAccessSecret.startsWith('change
 
 /** Time zone used to group report days, e.g. Asia/Phnom_Penh */
 export const REPORT_TIMEZONE = process.env.REPORT_TIMEZONE ?? 'UTC';
+
+/**
+ * KHQR payments.
+ *  manual: cashier confirms after seeing the payment arrive (no Bakong API token needed).
+ *  bakong: payment is confirmed automatically through the Bakong Open API.
+ */
+export const khqrConfig = {
+  mode: (process.env.KHQR_MODE === 'bakong' && process.env.BAKONG_TOKEN ? 'bakong' : 'manual') as 'bakong' | 'manual',
+  apiUrl: (process.env.BAKONG_API_URL ?? 'https://api-bakong.nbc.gov.kh').replace(/\/$/, ''),
+  token: process.env.BAKONG_TOKEN ?? '',
+  expiryMinutes: Number(process.env.KHQR_EXPIRY_MINUTES ?? 5),
+};

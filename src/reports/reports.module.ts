@@ -199,6 +199,18 @@ export class ReportsService {
     };
   }
 
+  /** How much each promotion gave away and how often it was used. */
+  async promotions(p: Principal, q: ReportQueryDto) {
+    const { where, from, to } = this.scope(p, q);
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT pr.id, pr.name, pr.type, count(DISTINCT s.id)::int AS sales,
+             sum(si.quantity) AS quantity, sum(si.promo_discount) AS discount, sum(si.line_total) AS revenue
+        FROM sale_items si JOIN sales s ON s.id = si.sale_id JOIN promotions pr ON pr.id = si.promotion_id
+       WHERE ${where} AND s.status <> 'VOIDED' AND si.promo_discount > 0
+       GROUP BY pr.id ORDER BY discount DESC`;
+    return { from, to, data: rows.map((r) => ({ ...r, quantity: num(r.quantity), discount: round2(num(r.discount)), revenue: round2(num(r.revenue)) })) };
+  }
+
   /** Current stock value per store (at cost and at selling price). */
   async inventoryValue(p: Principal, storeId?: string) {
     if (storeId) assertStoreAccess(p, storeId);
@@ -284,6 +296,11 @@ export class ReportsController {
   @Get('loyalty')
   loyalty(@CurrentPrincipal() p: Principal, @Query() q: TopQueryDto) {
     return this.reports.loyalty(p, q);
+  }
+
+  @Get('promotions')
+  promotions(@CurrentPrincipal() p: Principal, @Query() q: ReportQueryDto) {
+    return this.reports.promotions(p, q);
   }
 
   @Get('inventory-value')

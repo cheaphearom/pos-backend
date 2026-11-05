@@ -17,6 +17,10 @@ const admin = await login('admin@pos.local');
 const cashier = await login('cashier1@pos.local');
 const mgr = await login('manager.pp@pos.local');
 ok(admin && cashier && mgr, 'login for admin, manager, cashier');
+// Demo promotions would change the totals checked below; switch them off (promotions are tested later).
+for (const pr of (await call('GET', '/promotions?limit=200', { token: admin })).j.data ?? []) {
+  if (pr.isActive) await call('PATCH', `/promotions/${pr.id}`, { token: admin, body: { isActive: false } });
+}
 ok((await call('POST', '/auth/login', { body: { email: 'admin@pos.local', password: 'wrongpass' } })).s === 401, 'wrong password -> 401');
 ok((await call('GET', '/stores')).s === 401, 'no token -> 401');
 
@@ -141,6 +145,55 @@ ok((await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, off
 ok((await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, clientRef: offRef + 'x', offlineCreatedAt: new Date(Date.now() - 10 * 86400_000).toISOString(), items: [{ productId: water.id, quantity: 1 }], payments: [{ method: 'CASH', amount: 5 }] } })).s === 400, 'offline sale older than 7 days rejected');
 const dir = await call('GET', '/stores/directory', { token: cashier });
 ok(dir.s === 200 && dir.j.length === 3, 'store directory lists all stores');
+
+// ── Purchasing ──
+const coke = (await call('GET', `/products/lookup?code=SKU-0002&storeId=${pp01.id}`, { token: mgr })).j;
+const sup = await call('POST', '/suppliers', { token: mgr, body: { code: 'T-' + Date.now(), name: 'Test Supplier', paymentTermsDays: 7 } });
+ok(sup.s === 201, 'supplier created');
+const po = await call('POST', '/purchase-orders', { token: mgr, body: { supplierId: sup.j.id, storeId: pp01.id, items: [{ productId: coke.id, quantity: 24, unitCost: 0.3 }, { productId: water.id, quantity: 10 }] } });
+ok(po.s === 201 && po.j.status === 'DRAFT' && po.j.subtotal === String(24 * 0.3 + 10 * Number(water.costPrice ?? 0.15)).replace(/0+$/, '').replace(/\.$/, '') || po.j.subtotal, `PO ${po.j.poNo} draft, subtotal ${po.j.subtotal}`);
+ok((await call('POST', `/purchase-orders/${po.j.id}/receive`, { token: mgr, body: { items: [{ itemId: po.j.items[0].id, quantity: 1 }] } })).s === 400, 'cannot receive a draft');
+ok((await call('POST', `/purchase-orders/${po.j.id}/order`, { token: mgr })).j.status === 'ORDERED', 'PO ordered');
+const r1po = await call('POST', `/purchase-orders/${po.j.id}/receive`, { token: mgr, body: { reference: 'INV-77', items: [{ itemId: po.j.items[0].id, quantity: 12, unitCost: 0.32 }] } });
+const cokeAfter = (await call('GET', `/products/lookup?code=SKU-0002&storeId=${pp01.id}`, { token: mgr })).j;
+ok(r1po.j.status === 'PARTIALLY_RECEIVED' && Number(cokeAfter.stock) === Number(coke.stock) + 12, `partial delivery: status ${r1po.j.status}, stock ${coke.stock} -> ${cokeAfter.stock}`);
+ok(cokeAfter.costPrice === '0.32', 'cost price updated to received cost');
+ok((await call('POST', `/purchase-orders/${po.j.id}/receive`, { token: mgr, body: { items: [{ itemId: po.j.items[0].id, quantity: 13 }] } })).s === 400, 'cannot receive more than ordered');
+const r2po = await call('POST', `/purchase-orders/${po.j.id}/receive`, { token: mgr, body: { items: [{ itemId: po.j.items[0].id, quantity: 12 }, { itemId: po.j.items[1].id, quantity: 10 }] } });
+ok(r2po.j.status === 'RECEIVED' && r2po.j.receipts.length === 2, 'second delivery completes the PO');
+ok((await call('POST', `/purchase-orders/${po.j.id}/cancel`, { token: mgr })).s === 400, 'cannot cancel a received PO');
+ok((await call('GET', '/purchase-orders', { token: cashier })).s === 403, 'cashier cannot see purchase orders');
+const sugg = await call('GET', `/purchase-orders/suggestions?storeId=${pp01.id}`, { token: mgr });
+ok(sugg.s === 200 && sugg.j.some((x) => x.productId === choc.id), `reorder suggestions: ${sugg.j.length} item(s)`);
+
+// ── Promotions ──
+const b2g1 = await call('POST', '/promotions', { token: admin, body: { name: 'Coke 2+1', type: 'BUY_X_GET_Y', buyQty: 2, getQty: 1, productIds: [coke.id], storeIds: [pp01.id] } });
+ok(b2g1.s === 201, 'buy 2 get 1 promotion created');
+ok((await call('POST', '/promotions', { token: admin, body: { name: 'bad', type: 'PERCENT_OFF', value: 10 } })).s === 400, 'promotion without products rejected');
+const nowMin = (() => { const t = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Phnom_Penh', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date()).split(':'); return Number(t[0]) * 60 + Number(t[1]); })();
+await call('POST', '/promotions', { token: admin, body: { name: 'Not now', type: 'PERCENT_OFF', value: 50, productIds: [coke.id], startMinute: (nowMin + 120) % 1440, endMinute: (nowMin + 180) % 1440 } });
+const active = await call('GET', `/promotions/active?storeId=${pp01.id}`, { token: cashier });
+ok(active.s === 200 && active.j.promotions.some((x) => x.id === b2g1.j.id) && active.j.timeZone, 'POS can download active promotions');
+const promoSale = await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, items: [{ productId: coke.id, quantity: 3 }], payments: [{ method: 'CASH', amount: 5 }] } });
+// 3 x 0.65 = 1.95, one free (0.65) -> 1.30 + 10% tax = 1.43
+ok(promoSale.s === 201 && promoSale.j.total === '1.43' && promoSale.j.items[0].promoDiscount === '0.65' && promoSale.j.items[0].promotion?.name === 'Coke 2+1',
+  `buy 2 get 1 applied: total ${promoSale.j.total}, promo ${promoSale.j.items?.[0]?.promoDiscount} (happy hour outside window not applied)`);
+const prRep = await call('GET', '/reports/promotions', { token: mgr });
+ok(prRep.s === 200 && prRep.j.data.some((x) => x.name === 'Coke 2+1' && x.discount === 0.65), 'promotion report shows usage');
+await call('PATCH', `/promotions/${b2g1.j.id}`, { token: admin, body: { isActive: false } });
+
+// ── KHQR ──
+ok((await call('POST', '/payments/khqr', { token: admin, body: { storeId: pp02.id, amount: 1 } })).s === 400, 'KHQR refused for a store without a Bakong account');
+const kq = await call('POST', '/payments/khqr', { token: cashier, body: { storeId: pp01.id, amount: 1.43 } });
+ok(kq.s === 201 && kq.j.qr.startsWith('000201010212') && kq.j.qr.includes('54041.43') && /^[0-9a-f]{32}$/.test(kq.j.md5), `dynamic KHQR created (mode ${kq.j.mode})`);
+ok((await call('GET', `/payments/khqr/${kq.j.md5}`, { token: cashier })).j.status === 'PENDING', 'KHQR status pending');
+const kqSaleBody = { storeId: pp01.id, items: [{ productId: coke.id, quantity: 2 }], payments: [{ method: 'KHQR', amount: 1.43, reference: kq.j.md5 }] };
+ok((await call('POST', '/sales', { token: cashier, body: kqSaleBody })).s === 400, 'sale with unpaid KHQR rejected');
+ok((await call('POST', `/payments/khqr/${kq.j.md5}/confirm`, { token: cashier })).j.status === 'PAID', 'cashier confirms payment (manual mode)');
+const kqSale = await call('POST', '/sales', { token: cashier, body: kqSaleBody });
+ok(kqSale.s === 201, 'sale paid by KHQR ' + (kqSale.j.receiptNo ?? JSON.stringify(kqSale.j)));
+ok((await call('POST', '/sales', { token: cashier, body: kqSaleBody })).s === 400, 'same KHQR cannot pay a second sale');
+ok((await call('GET', `/payments/khqr/${kq.j.md5}`, { token: mgr })).s === 200 && (await call('GET', `/payments/khqr/${'0'.repeat(32)}`, { token: mgr })).s === 404, 'unknown KHQR -> 404');
 
 await new Promise((r) => setTimeout(r, 2500));
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

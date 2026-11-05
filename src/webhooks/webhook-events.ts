@@ -7,6 +7,7 @@ export const WEBHOOK_EVENTS = [
   'transfer.created',
   'transfer.received',
   'customer.created',
+  'purchase_order.received',
 ] as const;
 
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];

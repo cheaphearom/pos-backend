@@ -103,6 +103,30 @@ async function main() {
     await prisma.customer.upsert({ where: { code }, update: {}, create: { code, name, phone, points: 500 } });
   }
 
+  // Suppliers
+  const suppliers = [
+    { code: 'SUP-BEV', name: 'Mekong Beverages Co.', contactName: 'Mr. Sopheak', phone: '012 111 222', email: 'orders@mekongbev.example', paymentTermsDays: 30 },
+    { code: 'SUP-FMCG', name: 'Angkor Distribution', contactName: 'Ms. Lina', phone: '015 333 444', paymentTermsDays: 15 },
+    { code: 'SUP-FRESH', name: 'Kandal Fresh Farm', phone: '017 555 666', paymentTermsDays: 0 },
+  ];
+  for (const sup of suppliers) await prisma.supplier.upsert({ where: { code: sup.code }, update: {}, create: sup });
+
+  // Promotions (demo)
+  if (!(await prisma.promotion.count())) {
+    const bev = await prisma.category.findFirst({ where: { name: 'Beverages' } });
+    const noodles = await prisma.product.findFirst({ where: { name: 'Instant Noodles' } });
+    await prisma.promotion.createMany({
+      data: [
+        { name: 'Drinks 10% off', type: 'PERCENT_OFF', value: 10, categoryIds: bev ? [bev.id] : [], description: 'All beverages' },
+        { name: 'Noodles buy 2 get 1', type: 'BUY_X_GET_Y', buyQty: 2, getQty: 1, productIds: noodles ? [noodles.id] : [] },
+        { name: 'Happy hour 20% (17:00-19:00)', type: 'PERCENT_OFF', value: 20, allProducts: true, startMinute: 17 * 60, endMinute: 19 * 60, isActive: false },
+      ],
+    });
+  }
+
+  // KHQR demo account on the first store (replace with your real Bakong account)
+  await prisma.store.update({ where: { code: 'PP01' }, data: { khqrAccountId: 'demo_shop@aclb', khqrMerchantName: 'POS DEMO SHOP', khqrCity: 'Phnom Penh' } });
+
   console.log(`Seeded ${stores.length} stores, ${n} products, ${customers.length} customers.`);
   console.log('Login: admin@pos.local / Password@123 (also manager.pp@, manager.sr@, cashier1@, cashier2@, cashier3@)');
 }

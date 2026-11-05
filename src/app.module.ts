@@ -15,6 +15,9 @@ import { ApiKeysModule } from './integrations/api-keys.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
+import { PaymentsModule } from './payments/payments.module';
+import { PromotionsModule } from './promotions/promotions.module';
+import { PurchasingModule } from './purchasing/purchasing.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 import { ShiftsModule } from './shifts/shifts.module';
@@ -40,6 +43,9 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     SalesModule,
     ReportsModule,
     ApiKeysModule,
+    PurchasingModule,
+    PromotionsModule,
+    PaymentsModule,
   ],
   controllers: [HealthController],
   providers: [

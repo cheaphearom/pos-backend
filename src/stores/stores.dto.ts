@@ -1,6 +1,6 @@
 import { PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsNumber, IsOptional, IsString, Length, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 
 export class CreateStoreDto {
   /** Short unique code used in receipt numbers, e.g. PP01 */
@@ -23,6 +23,25 @@ export class CreateStoreDto {
   /** Tax rate as a fraction: 0.1 = 10% */
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 4 }) @Min(0) @Max(1)
   taxRate?: number;
+
+  /** Bakong account id for KHQR, e.g. myshop@aclb. Empty = KHQR off */
+  @IsOptional() @ValidateIf((_, v) => v !== null && v !== '') @Matches(/^[^\s@]+@[^\s@]+$/, { message: 'khqrAccountId looks like name@bank' }) @MaxLength(32)
+  khqrAccountId?: string | null;
+
+  /** Name customers see in their banking app (max 25) */
+  @IsOptional() @IsString() @MaxLength(25)
+  khqrMerchantName?: string | null;
+
+  @IsOptional() @IsString() @MaxLength(15)
+  khqrCity?: string | null;
+
+  /** Only for Bakong merchant accounts */
+  @IsOptional() @IsString() @MaxLength(32)
+  khqrMerchantId?: string | null;
+
+  /** Acquiring bank name */
+  @IsOptional() @IsString() @MaxLength(32)
+  khqrBank?: string | null;
 }
 
 export class UpdateStoreDto extends PartialType(CreateStoreDto) {
