@@ -249,5 +249,70 @@ const wrep = await call('GET', '/reports/wallet', { token: mgr });
 ok(wrep.s === 200 && wrep.j.outstanding >= Number(rep.j.balance) && wrep.j.data.some((x) => x.type === 'TOPUP'), `wallet report: $${wrep.j.outstanding} held on ${wrep.j.activeCards} active card(s)`);
 await call('POST', `/shifts/${shift2.j.id}/close`, { token: cashier, body: { closingCash: 30 } });
 
+// ── Coupons ──
+await call('POST', '/inventory/adjustments', { token: mgr, body: { storeId: pp01.id, type: 'PURCHASE', items: [{ productId: water.id, quantity: 200 }] } });
+const shared = await call('POST', '/coupons', { token: admin, body: { name: 'Save 10', type: 'PERCENT', value: 10, minSpend: 2, maxDiscount: 1, sharedCode: 'SAVE10T' + Date.now().toString().slice(-4), usageLimit: 3 } });
+ok(shared.s === 201 && shared.j._count.codes === 1, 'shared coupon campaign created');
+const sharedCode = (await call('GET', `/coupons/${shared.j.id}/codes`, { token: mgr })).j.data[0].code;
+const couponSale = (code, qty) => call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, couponCode: code, items: [{ productId: water.id, quantity: qty }], payments: [{ method: 'CASH', amount: 50 }] } });
+ok((await couponSale(sharedCode, 2)).s === 400, 'coupon below minimum spend rejected');
+const cs = await couponSale(sharedCode, 10); // 3.50 -> 10% = 0.35 off -> 3.15 + tax 0.32 = 3.47
+ok(cs.s === 201 && cs.j.couponDiscount === '0.35' && cs.j.total === '3.47' && cs.j.couponName?.startsWith('Save 10'), `coupon 10% applied: discount ${cs.j.couponDiscount}, total ${cs.j.total}`);
+const cs2 = await couponSale(sharedCode, 100); // 35.00 -> 10% = 3.50, capped at 1.00
+ok(cs2.s === 201 && cs2.j.couponDiscount === '1', `percent coupon capped at max discount: ${cs2.j.couponDiscount}`);
+await couponSale(sharedCode, 10);
+const over = await couponSale(sharedCode, 10);
+ok(over.s === 400 && /fully used/.test(over.j.message), 'campaign usage limit (3) enforced');
+const uniq = await call('POST', '/coupons', { token: admin, body: { name: 'One-time $1', type: 'AMOUNT', value: 1, uniqueCount: 3, prefix: 'TST' } });
+const uCodes = (await call('GET', `/coupons/${uniq.j.id}/codes?all=true`, { token: mgr })).j;
+ok(uniq.s === 201 && uCodes.length === 3 && uCodes[0].code.startsWith('TST-'), `3 unique codes generated, e.g. ${uCodes[0]?.code}`);
+const uPar = await Promise.all(Array.from({ length: 5 }, () => couponSale(uCodes[0].code, 10)));
+ok(uPar.filter((r) => r.s === 201).length === 1, `5 tills use the same single-use code at once: ${uPar.filter((r) => r.s === 201).length} succeeded`);
+ok((await couponSale(uCodes[0].code, 10)).j.message === 'This coupon code has already been used', 'used single-use code rejected');
+const memberOnly = await call('POST', '/coupons', { token: admin, body: { name: 'Members once', type: 'AMOUNT', value: 0.5, sharedCode: 'MEM' + Date.now().toString().slice(-6), membersOnly: true, perCustomerLimit: 1 } });
+const memCode = (await call('GET', `/coupons/${memberOnly.j.id}/codes`, { token: mgr })).j.data[0].code;
+ok((await couponSale(memCode, 10)).s === 400, 'members-only coupon needs a customer');
+const memSale = () => call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, couponCode: memCode, customerId: cust.id, items: [{ productId: water.id, quantity: 10 }], payments: [{ method: 'CASH', amount: 50 }] } });
+ok((await memSale()).s === 201 && (await memSale()).s === 400, 'per-customer limit: second use by the same customer rejected');
+ok((await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, clientRef: 'off-c-' + Date.now(), offlineCreatedAt: new Date().toISOString(), couponCode: uCodes[1].code, items: [{ productId: water.id, quantity: 10 }], payments: [{ method: 'CASH', amount: 50 }] } })).s === 400, 'coupons refused for offline sales');
+
+// ── Gift vouchers ──
+const vb = await call('POST', '/vouchers/batches', { token: admin, body: { name: 'Test $5', value: 5, count: 3, sold: true } });
+ok(vb.s === 201 && vb.j.codes.length === 3 && vb.j.codes[0].code.startsWith('GV'), `3 vouchers created, e.g. ${vb.j.codes?.[0]?.code}`);
+const vcode = vb.j.codes[0].code;
+const voucherSale = (code, amount, qty = 1) => call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, items: [{ productId: water.id, quantity: qty }], payments: [{ method: 'VOUCHER', amount, reference: code }] } });
+ok((await voucherSale(vcode, 0.39)).j.message === 'This voucher was not sold yet', 'unsold voucher cannot pay');
+const shift3 = await call('POST', '/shifts/open', { token: cashier, body: { storeId: pp01.id, openingCash: 0 } });
+const sold = await call('POST', `/vouchers/${vcode.toLowerCase()}/sell`, { token: cashier, body: { storeId: pp01.id, method: 'CASH' } });
+ok(sold.s === 201 && sold.j.status === 'ACTIVE', 'voucher sold for cash and activated');
+const sum3 = (await call('GET', `/shifts/${shift3.j.id}`, { token: cashier })).j.summary;
+ok(Number(sum3.expectedCash) === 5, `voucher cash counted in the drawer: expected ${sum3.expectedCash}`);
+ok((await call('POST', `/vouchers/${vcode}/sell`, { token: cashier, body: { storeId: pp01.id, method: 'CASH' } })).s === 400, 'cannot sell the same voucher twice');
+const vs = await voucherSale(vcode, 0.39);
+ok(vs.s === 201 && (await call('GET', `/vouchers/lookup?code=${vcode}`, { token: cashier })).j.balance === '4.61', 'voucher paid $0.39, $4.61 left on it');
+ok((await voucherSale(vcode, 5.39, 14)).s === 400, 'voucher cannot pay more than its balance');
+ok((await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, items: [{ productId: water.id, quantity: 1 }], payments: [{ method: 'VOUCHER', amount: 1, reference: vcode }] } })).s === 400, 'no change is given on vouchers');
+const vEnd = await voucherSale(vcode, 4.61, 12); // 12 x 0.35 = 4.20 + 0.42 tax = 4.62 > 4.61 -> rejected; use 4.61 split
+const vSplit = await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, items: [{ productId: water.id, quantity: 12 }], payments: [{ method: 'VOUCHER', amount: 4.61, reference: vcode }, { method: 'CASH', amount: 1 }] } });
+const vAfter = (await call('GET', `/vouchers/lookup?code=${vcode}`, { token: cashier })).j;
+ok(vEnd.s === 400 && vSplit.s === 201 && vAfter.status === 'USED' && vAfter.balance === '0', 'rest paid in cash; voucher fully used');
+const vref = await call('POST', `/sales/${vs.j.id}/refunds`, { token: mgr, body: { items: [{ saleItemId: vs.j.items[0].id, quantity: 1 }], method: 'VOUCHER' } });
+const vBack = (await call('GET', `/vouchers/lookup?code=${vcode}`, { token: cashier })).j;
+ok(vref.s === 201 && vBack.status === 'ACTIVE' && vBack.balance === '0.39', 'refund back to the voucher re-opens it');
+const fb = await call('POST', '/vouchers/batches', { token: admin, body: { name: 'Free $1', value: 1, count: 1, sold: false } });
+ok((await voucherSale(fb.j.codes[0].code, 0.39)).s === 201, 'free promotional voucher works without selling');
+const exp = await call('POST', '/vouchers/batches', { token: admin, body: { name: 'Expired', value: 1, count: 1, sold: false, expiresAt: '2020-01-01T00:00:00Z' } });
+ok((await voucherSale(exp.j.codes[0].code, 0.39)).j.message === 'This voucher has expired', 'expired voucher rejected');
+await call('POST', `/vouchers/${vb.j.codes[1].code}/void`, { token: mgr, body: { reason: 'lost' } });
+ok((await call('POST', `/vouchers/${vb.j.codes[1].code}/sell`, { token: cashier, body: { storeId: pp01.id, method: 'CASH' } })).s === 400, 'void voucher cannot be sold');
+
+// ── One lookup for the POS scanner ──
+const lk = async (code) => (await call('GET', `/codes/lookup?code=${encodeURIComponent(code)}&storeId=${pp01.id}`, { token: cashier })).j;
+ok((await lk(vb.j.codes[2].code)).kind === 'voucher' && (await lk(uCodes[2].code)).kind === 'coupon' && (await lk(rep.j.cardNumber)).kind === 'wallet', 'code lookup recognises voucher, coupon and wallet card');
+ok((await call('GET', `/codes/lookup?code=NOPE123&storeId=${pp01.id}`, { token: cashier })).s === 404, 'unknown code -> 404');
+const cvr = await call('GET', '/reports/coupons-vouchers', { token: mgr });
+ok(cvr.s === 200 && cvr.j.coupons.some((c) => c.name === 'Save 10' && c.uses === 3) && cvr.j.vouchers.soldInPeriod.value >= 5, `report: coupons ${cvr.j.coupons.length} campaign(s), vouchers sold $${cvr.j.vouchers.soldInPeriod.value}, outstanding $${cvr.j.vouchers.outstandingSold.value}`);
+await call('POST', `/shifts/${shift3.j.id}/close`, { token: cashier, body: { closingCash: 5 } });
+
 await new Promise((r) => setTimeout(r, 2500));
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

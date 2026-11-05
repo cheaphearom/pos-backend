@@ -101,7 +101,7 @@ export class ShiftsService {
 
   /** Totals for the cash-drawer report. */
   private async summarize(shift: { id: string; storeId: string; userId: string; openingCash: Prisma.Decimal; openedAt: Date; closedAt: Date | null }) {
-    const [sales, payments, cashRefunds, topups] = await Promise.all([
+    const [sales, payments, cashRefunds, topups, voucherSales] = await Promise.all([
       this.prisma.sale.aggregate({
         where: { shiftId: shift.id },
         _count: true,
@@ -118,7 +118,9 @@ export class ShiftsService {
         _sum: { amount: true },
       }),
       this.prisma.walletTransaction.groupBy({ by: ['method'], where: { shiftId: shift.id, type: 'TOPUP' }, _sum: { amount: true }, _count: true }),
+      this.prisma.voucher.groupBy({ by: ['soldMethod'], where: { soldShiftId: shift.id }, _sum: { value: true }, _count: true }),
     ]);
+    const cashVouchers = voucherSales.find((x) => x.soldMethod === 'CASH')?._sum.value ?? D(0);
     const cashTopups = topups.find((x) => x.method === 'CASH')?._sum.amount ?? D(0);
     const byMethod = Object.fromEntries(payments.map((x) => [x.method, x._sum.amount ?? D(0)]));
     const cashIn = byMethod.CASH ?? D(0);
@@ -132,7 +134,8 @@ export class ShiftsService {
       payments: byMethod,
       cashRefunds: refunds,
       walletTopups: Object.fromEntries(topups.map((x) => [x.method ?? 'OTHER', x._sum.amount ?? D(0)])),
-      expectedCash: shift.openingCash.plus(cashIn).minus(change).minus(refunds).plus(cashTopups),
+      voucherSales: Object.fromEntries(voucherSales.map((x) => [x.soldMethod ?? 'OTHER', x._sum.value ?? D(0)])),
+      expectedCash: shift.openingCash.plus(cashIn).minus(change).minus(refunds).plus(cashTopups).plus(cashVouchers),
     };
   }
 

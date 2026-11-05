@@ -226,6 +226,41 @@ export class ReportsService {
     };
   }
 
+  /** Coupons used per campaign, and gift vouchers sold / spent / still outstanding. */
+  async couponsAndVouchers(p: Principal, q: ReportQueryDto) {
+    const { from, to, tz } = this.scope(p, q);
+    const storeIds = q.storeId ? [q.storeId] : p.storeIds;
+    const sf = (col: string) =>
+      storeIds === 'ALL' ? Prisma.sql`true` : storeIds.length ? Prisma.sql`${Prisma.raw(col)} IN (${Prisma.join(storeIds.map((id) => Prisma.sql`${id}::uuid`))})` : Prisma.sql`false`;
+    const period = (col: string) => Prisma.sql`${Prisma.raw(col)} >= ((${from}::date)::timestamp AT TIME ZONE ${tz}) AT TIME ZONE 'UTC'
+         AND ${Prisma.raw(col)} < ((${to}::date + 1)::timestamp AT TIME ZONE ${tz}) AT TIME ZONE 'UTC'`;
+    const coupons = await this.prisma.$queryRaw<any[]>`
+      SELECT c.id, c.name, count(*)::int AS uses, sum(r.discount) AS discount
+        FROM coupon_redemptions r JOIN coupon_campaigns c ON c.id = r.campaign_id
+       WHERE ${sf('r.store_id')} AND ${period('r.created_at')}
+       GROUP BY c.id ORDER BY discount DESC`;
+    const [sold] = await this.prisma.$queryRaw<any[]>`
+      SELECT count(*)::int AS count, coalesce(sum(v.value), 0) AS value FROM vouchers v WHERE ${sf('v.sold_store_id')} AND v.sold_at IS NOT NULL AND ${period('v.sold_at')}`;
+    const [spent] = await this.prisma.$queryRaw<any[]>`
+      SELECT count(DISTINCT u.voucher_id)::int AS count, coalesce(sum(u.amount), 0) AS value FROM voucher_uses u WHERE ${sf('u.store_id')} AND ${period('u.created_at')}`;
+    const outstanding = await this.prisma.$queryRaw<any[]>`
+      SELECT b.sold, count(*)::int AS count, coalesce(sum(v.balance), 0) AS value
+        FROM vouchers v JOIN voucher_batches b ON b.id = v.batch_id
+       WHERE v.status = 'ACTIVE' AND (v.expires_at IS NULL OR v.expires_at > now())
+       GROUP BY b.sold`;
+    const out = (isSold: boolean) => outstanding.find((o) => o.sold === isSold) ?? { count: 0, value: 0 };
+    return {
+      from, to,
+      coupons: coupons.map((c) => ({ ...c, discount: round2(num(c.discount)) })),
+      vouchers: {
+        soldInPeriod: { count: sold.count, value: round2(num(sold.value)) },
+        spentInPeriod: { count: spent.count, value: round2(num(spent.value)) },
+        outstandingSold: { count: out(true).count, value: round2(num(out(true).value)) },
+        outstandingFree: { count: out(false).count, value: round2(num(out(false).value)) },
+      },
+    };
+  }
+
   /** How much each promotion gave away and how often it was used. */
   async promotions(p: Principal, q: ReportQueryDto) {
     const { where, from, to } = this.scope(p, q);
@@ -323,6 +358,11 @@ export class ReportsController {
   @Get('loyalty')
   loyalty(@CurrentPrincipal() p: Principal, @Query() q: TopQueryDto) {
     return this.reports.loyalty(p, q);
+  }
+
+  @Get('coupons-vouchers')
+  couponsVouchers(@CurrentPrincipal() p: Principal, @Query() q: ReportQueryDto) {
+    return this.reports.couponsAndVouchers(p, q);
   }
 
   @Get('wallet')

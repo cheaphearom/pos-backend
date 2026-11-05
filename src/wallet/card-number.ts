@@ -33,3 +33,10 @@ export function newSerial(): string {
 
 /** Compare serials ignoring case, spaces and dashes. */
 export const sameSerial = (a: string, b: string) => a.replace(/[\s-]/g, '').toUpperCase() === b.replace(/[\s-]/g, '').toUpperCase();
+
+/** Random readable code (no 0/O/1/I/L), for coupons and vouchers. */
+export function randomCode(length: number): string {
+  let s = '';
+  for (let i = 0; i < length; i++) s += SERIAL_CHARS[randomInt(SERIAL_CHARS.length)];
+  return s;
+}

@@ -47,6 +47,7 @@ enum PaymentMethod {
   BANK_TRANSFER
   E_WALLET // other e-wallets (Wing, TrueMoney...)
   WALLET // the store's own wallet card (stored balance)
+  VOUCHER // gift voucher code
   OTHER
 }
 
@@ -355,6 +356,9 @@ model Sale {
   amountPaid     Decimal    @map("amount_paid") @db.Decimal(14, 2)
   changeDue      Decimal    @default(0) @map("change_due") @db.Decimal(14, 2)
   pointsEarned   Int        @default(0) @map("points_earned")
+  couponCodeId   String?    @map("coupon_code_id") @db.Uuid
+  couponDiscount Decimal    @default(0) @map("coupon_discount") @db.Decimal(14, 2)
+  couponName     String?    @map("coupon_name") @db.VarChar(100) // snapshot for the receipt
   refundedTotal  Decimal    @default(0) @map("refunded_total") @db.Decimal(14, 2)
   note           String?
   createdAt      DateTime   @default(now()) @map("created_at")
@@ -744,4 +748,134 @@ model WalletTransaction {
   @@index([storeId, createdAt])
   @@index([shiftId])
   @@map("wallet_transactions")
+}
+
+// ──────────────────────── Coupons (discount codes) ────────────────────────
+
+enum CouponType {
+  PERCENT // value = percent off the sale
+  AMOUNT // value = amount off the sale
+}
+
+model CouponCampaign {
+  id               String     @id @default(uuid()) @db.Uuid
+  name             String     @db.VarChar(100) // shown on the receipt
+  type             CouponType
+  value            Decimal    @db.Decimal(14, 2)
+  minSpend         Decimal    @default(0) @map("min_spend") @db.Decimal(14, 2)
+  maxDiscount      Decimal?   @map("max_discount") @db.Decimal(14, 2) // cap for percent coupons
+  storeIds         String[]   @default([]) @map("store_ids") // empty = all stores
+  startsAt         DateTime?  @map("starts_at")
+  endsAt           DateTime?  @map("ends_at")
+  usageLimit       Int?       @map("usage_limit") // total uses of the whole campaign
+  perCustomerLimit Int?       @map("per_customer_limit")
+  membersOnly      Boolean    @default(false) @map("members_only")
+  isActive         Boolean    @default(true) @map("is_active")
+  usedCount        Int        @default(0) @map("used_count")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+
+  codes       CouponCode[]
+  redemptions CouponRedemption[]
+
+  @@map("coupon_campaigns")
+}
+
+/// One code of a campaign: a shared code (many uses) or a unique single-use code.
+model CouponCode {
+  id         String   @id @default(uuid()) @db.Uuid
+  campaignId String   @map("campaign_id") @db.Uuid
+  code       String   @unique @db.VarChar(40)
+  maxUses    Int?     @map("max_uses") // null = unlimited (shared code); 1 = single use
+  usedCount  Int      @default(0) @map("used_count")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  campaign    CouponCampaign     @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  redemptions CouponRedemption[]
+
+  @@index([campaignId])
+  @@map("coupon_codes")
+}
+
+model CouponRedemption {
+  id         BigInt   @id @default(autoincrement())
+  codeId     String   @map("code_id") @db.Uuid
+  campaignId String   @map("campaign_id") @db.Uuid
+  saleId     String   @unique @map("sale_id") @db.Uuid // one coupon per sale
+  customerId String?  @map("customer_id") @db.Uuid
+  storeId    String   @map("store_id") @db.Uuid
+  discount   Decimal  @db.Decimal(14, 2)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  code     CouponCode     @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  campaign CouponCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, createdAt])
+  @@index([customerId, campaignId])
+  @@map("coupon_redemptions")
+}
+
+// ──────────────────────── Gift vouchers (prepaid codes) ────────────────────────
+
+enum VoucherStatus {
+  INACTIVE // printed, not sold yet (sold vouchers only)
+  ACTIVE
+  USED // value fully spent
+  VOID // cancelled
+}
+
+model VoucherBatch {
+  id        String    @id @default(uuid()) @db.Uuid
+  name      String    @db.VarChar(100)
+  value     Decimal   @db.Decimal(14, 2)
+  /// true = customers buy them (money in; activated when sold). false = given free (promotion), active at once.
+  sold      Boolean   @default(true)
+  expiresAt DateTime? @map("expires_at")
+  count     Int
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  vouchers Voucher[]
+
+  @@map("voucher_batches")
+}
+
+model Voucher {
+  id         String        @id @default(uuid()) @db.Uuid
+  batchId    String        @map("batch_id") @db.Uuid
+  code       String        @unique @db.VarChar(40)
+  value      Decimal       @db.Decimal(14, 2)
+  balance    Decimal       @db.Decimal(14, 2) // what is left to spend
+  status     VoucherStatus @default(INACTIVE)
+  expiresAt  DateTime?     @map("expires_at")
+  soldAt     DateTime?     @map("sold_at")
+  soldStoreId String?      @map("sold_store_id") @db.Uuid
+  soldMethod PaymentMethod? @map("sold_method")
+  soldShiftId String?      @map("sold_shift_id") @db.Uuid
+  soldById   String?       @map("sold_by_id") @db.Uuid
+  note       String?
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  batch VoucherBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  uses  VoucherUse[]
+
+  @@index([batchId])
+  @@index([status])
+  @@map("vouchers")
+}
+
+model VoucherUse {
+  id        BigInt   @id @default(autoincrement())
+  voucherId String   @map("voucher_id") @db.Uuid
+  saleId    String   @map("sale_id") @db.Uuid
+  storeId   String   @map("store_id") @db.Uuid
+  amount    Decimal  @db.Decimal(14, 2) // + spent, - given back on refund
+  createdAt DateTime @default(now()) @map("created_at")
+
+  voucher Voucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+
+  @@index([voucherId])
+  @@index([saleId])
+  @@map("voucher_uses")
 }

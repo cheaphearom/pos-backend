@@ -13,6 +13,8 @@ import { applyPromotions } from '../promotions/engine';
 import { PromotionsService } from '../promotions/promotions.module';
 import { KhqrService } from '../payments/payments.module';
 import { WalletService } from '../wallet/wallet.service';
+import { CouponCheck, CouponsService } from '../coupons/coupons.module';
+import { VouchersService } from '../vouchers/vouchers.module';
 import { REPORT_TIMEZONE } from '../config';
 import { CreateRefundDto, CreateSaleDto, SaleQueryDto } from './sales.dto';
 
@@ -38,6 +40,8 @@ export class SalesService {
     private readonly promotions: PromotionsService,
     private readonly khqr: KhqrService,
     private readonly wallet: WalletService,
+    private readonly coupons: CouponsService,
+    private readonly vouchers: VouchersService,
   ) {}
 
   /**
@@ -99,12 +103,20 @@ export class SalesService {
       return { ...l, promo, promotionId: promoResults[i].promotionId, lineDiscount: promo.plus(manual) };
     });
 
+    // Coupon: checked here (clear errors), counted inside the transaction.
+    let coupon: (CouponCheck & { discount: number }) | null = null;
+    if (dto.couponCode) {
+      if (offlineAt) throw new BadRequestException('Coupons need a connection and cannot be used offline');
+      const base = lines.reduce((t, l) => t.plus(l.unitPrice.mul(l.item.quantity).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).minus(l.lineDiscount)), D(0));
+      coupon = await this.coupons.check(dto.couponCode, { storeId: dto.storeId, customerId: dto.customerId, base: base.toNumber() });
+    }
+
     let priced;
     try {
       priced = priceSale(
         lines.map((l) => ({ unitPrice: l.unitPrice, quantity: l.item.quantity, discount: l.lineDiscount, taxable: l.prod.taxable })),
         store.taxRate,
-        { amount: dto.discount, percent: dto.discountPercent },
+        { amount: D(dto.discount ?? 0).plus(coupon?.discount ?? 0).toNumber() || undefined, percent: dto.discountPercent },
       );
     } catch (e) {
       if (e instanceof PricingError) throw new BadRequestException(e.message);
@@ -129,6 +141,7 @@ export class SalesService {
     const changeDue = paid.minus(amountDue);
 
     const userId = userIdOf(p);
+    if (offlineAt && dto.payments.some((x) => x.method === 'VOUCHER')) throw new BadRequestException('Vouchers need a connection and cannot be used offline');
     const usesWallet = dto.payments.some((x) => x.method === 'WALLET');
     if (usesWallet && offlineAt) throw new BadRequestException('Wallet card payments need a connection and cannot be made offline');
     if (usesWallet) await this.wallet.verifyForPayment(dto.payments); // PIN checks, outside the transaction
@@ -162,6 +175,9 @@ export class SalesService {
               taxTotal: priced.taxTotal,
               total: priced.total,
               pointsRedeemed: redeem,
+              couponCodeId: coupon?.code.id,
+              couponDiscount: coupon?.discount ?? 0,
+              couponName: coupon ? `${coupon.campaign.name} (${coupon.code.code})` : undefined,
               pointsDiscount,
               amountDue,
               amountPaid: paid,
@@ -192,6 +208,12 @@ export class SalesService {
 
           // KHQR payments must really be paid and can pay for one sale only.
           await this.khqr.claimForSale(tx, created.id, dto.storeId, dto.payments);
+
+          if (coupon) await this.coupons.redeem(tx, coupon, { saleId: created.id, storeId: dto.storeId, customerId: dto.customerId, discount: coupon.discount });
+          for (const pay of dto.payments.filter((x) => x.method === 'VOUCHER')) {
+            if (!pay.reference) throw new BadRequestException('Scan the voucher code');
+            await this.vouchers.spend(tx, pay.reference, pay.amount, { saleId: created.id, storeId: dto.storeId });
+          }
 
           // Wallet cards: take the money off the balance (fails the whole sale if not enough).
           for (const pay of dto.payments.filter((x) => x.method === 'WALLET')) {
@@ -354,6 +376,11 @@ export class SalesService {
           },
         });
 
+        if (dto.method === 'VOUCHER') {
+          const vPay = sale.payments.find((x) => x.method === 'VOUCHER');
+          if (!vPay?.reference) throw new BadRequestException('This sale was not paid with a voucher');
+          await this.vouchers.refund(tx, vPay.reference, amount, { saleId, storeId: sale.storeId });
+        }
         if ((dto.method ?? 'CASH') === 'WALLET') {
           const walletPay = sale.payments.find((x) => x.method === 'WALLET');
           if (!walletPay?.reference) throw new BadRequestException('This sale was not paid with a wallet card');

@@ -53,6 +53,10 @@ export class CreateSaleDto {
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100)
   discountPercent?: number;
 
+  /** Coupon code (discount on the whole sale) */
+  @IsOptional() @IsString() @MaxLength(40)
+  couponCode?: string;
+
   /** Loyalty points to use as payment */
   @IsOptional() @Type(() => Number) @IsInt() @Min(1)
   redeemPoints?: number;

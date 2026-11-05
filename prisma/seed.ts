@@ -155,6 +155,22 @@ async function main() {
     console.log(`Wallet demo card: ${cards[0].cardNumber} (PIN 1234, $20). Unused: ${cards[1].cardNumber} with serial ${cards[1].serialNumber}, ...`);
   }
 
+  // Coupons and gift vouchers (demo)
+  if (!(await prisma.couponCampaign.count())) {
+    const welcome = await prisma.couponCampaign.create({
+      data: { name: 'Welcome 10%', type: 'PERCENT', value: 10, minSpend: 5, maxDiscount: 3, perCustomerLimit: 1, membersOnly: true },
+    });
+    await prisma.couponCode.create({ data: { campaignId: welcome.id, code: 'WELCOME10', maxUses: null } });
+    const lucky = await prisma.couponCampaign.create({ data: { name: 'Lucky $1 off', type: 'AMOUNT', value: 1, minSpend: 3 } });
+    await prisma.couponCode.createMany({ data: ['LUCKY-AAAA1111', 'LUCKY-BBBB2222', 'LUCKY-CCCC3333'].map((code) => ({ campaignId: lucky.id, code, maxUses: 1 })) });
+
+    const gift = await prisma.voucherBatch.create({ data: { name: '$10 gift voucher', value: 10, count: 3, sold: true } });
+    await prisma.voucher.createMany({ data: ['GVDEMO10A', 'GVDEMO10B', 'GVDEMO10C'].map((code) => ({ batchId: gift.id, code, value: 10, balance: 10, status: 'INACTIVE' })) });
+    const free = await prisma.voucherBatch.create({ data: { name: '$2 thank-you voucher', value: 2, count: 2, sold: false } });
+    await prisma.voucher.createMany({ data: ['GVFREE2A', 'GVFREE2B'].map((code) => ({ batchId: free.id, code, value: 2, balance: 2, status: 'ACTIVE' })) });
+    console.log('Coupons: WELCOME10 (members, 10%, min $5), LUCKY-AAAA1111 ($1 off). Vouchers: GVDEMO10A (sell first), GVFREE2A (free $2).');
+  }
+
   console.log(`Seeded ${stores.length} stores, ${n} products, ${customers.length} customers.`);
   console.log('Login: admin@pos.local / Password@123 (also manager.pp@, manager.sr@, cashier1@, cashier2@, cashier3@)');
 }
