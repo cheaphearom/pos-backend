@@ -29,6 +29,24 @@ if (config.nodeEnv === 'production' && config.jwtAccessSecret.startsWith('change
   throw new Error('JWT_ACCESS_SECRET must be set to a strong secret in production');
 }
 
+/**
+ * Member app login: a one-time code sent to the member's phone.
+ *  dev:     the code is returned in the API response and logged (testing only, refused in production)
+ *  webhook: the code is POSTed to MEMBER_OTP_WEBHOOK_URL, which sends the SMS (your SMS gateway, Telegram bot...)
+ */
+export const memberConfig = {
+  otpMode: (process.env.MEMBER_OTP_MODE ?? (config.nodeEnv === 'production' ? 'webhook' : 'dev')) as 'dev' | 'webhook',
+  otpWebhookUrl: process.env.MEMBER_OTP_WEBHOOK_URL ?? '',
+  otpWebhookSecret: process.env.MEMBER_OTP_WEBHOOK_SECRET ?? '',
+  otpMinutes: num(process.env.MEMBER_OTP_MINUTES, 5),
+  jwtSecret: process.env.MEMBER_JWT_SECRET ?? config.jwtAccessSecret + ':member',
+  tokenDays: num(process.env.MEMBER_TOKEN_DAYS, 60),
+  brand: process.env.MEMBER_APP_NAME ?? 'our café',
+};
+if (config.nodeEnv === 'production' && memberConfig.otpMode === 'dev') {
+  throw new Error('MEMBER_OTP_MODE=dev shows login codes to anyone and cannot be used in production');
+}
+
 /** Time zone used to group report days, e.g. Asia/Phnom_Penh */
 export const REPORT_TIMEZONE = process.env.REPORT_TIMEZONE ?? 'UTC';
 

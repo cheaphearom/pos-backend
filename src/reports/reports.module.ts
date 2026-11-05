@@ -53,8 +53,11 @@ export class ReportsService {
     } catch {
       throw new BadRequestException(`Unknown time zone ${tz}`);
     }
-    const to = q.to ?? new Date().toISOString().slice(0, 10);
-    const from = q.from ?? new Date(Date.now() - 29 * 86_400_000).toISOString().slice(0, 10);
+    // Default: the last 30 days, where "today" is today in the report time zone (not in UTC:
+    // just after midnight in Phnom Penh it is still yesterday in UTC).
+    const localDay = (t: number) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(t);
+    const to = q.to ?? localDay(Date.now());
+    const from = q.from ?? localDay(Date.now() - 29 * 86_400_000);
     const col = Prisma.raw(`${alias}.created_at`);
     const storeCol = Prisma.raw(`${alias}.store_id`);
     // created_at is stored in UTC; convert local day boundaries of `tz` to UTC.

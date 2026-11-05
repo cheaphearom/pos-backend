@@ -25,6 +25,7 @@ import { LookupModule } from './lookup.controller';
 import { ModifiersModule } from './modifiers/modifiers.module';
 import { KitchenModule } from './kitchen/kitchen.module';
 import { RecipesModule } from './recipes/recipes.module';
+import { MemberModule } from './member/member.module';
 import { OnlineModule } from './online/online.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
@@ -62,6 +63,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     KitchenModule,
     RecipesModule,
     OnlineModule,
+    MemberModule,
   ],
   controllers: [HealthController],
   providers: [

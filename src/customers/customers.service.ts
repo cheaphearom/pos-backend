@@ -7,6 +7,10 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { AdjustPointsDto, CreateCustomerDto, CustomerQueryDto, UpdateCustomerDto } from './customers.dto';
 import { changePoints, valueOfPoints } from './loyalty';
+import { normalizePhone } from './phone';
+
+/** New member number, e.g. M1234567842 */
+export const newMemberCode = () => `M${Date.now().toString().slice(-8)}${randomInt(10, 99)}`;
 
 /** Customers are shared by all stores, so a member can earn and redeem points anywhere. */
 @Injectable()
@@ -21,7 +25,7 @@ export class CustomersService {
       ? {
           OR: [
             { name: { contains: q.search, mode: 'insensitive' } },
-            { phone: { contains: q.search } },
+            { phone: { contains: normalizePhone(q.search) || q.search } },
             { email: { contains: q.search, mode: 'insensitive' } },
             { code: q.search },
           ],
@@ -41,21 +45,22 @@ export class CustomersService {
 
   /** POS: find a member by phone or card number. */
   async lookup(code: string) {
-    const c = await this.prisma.customer.findFirst({ where: { isActive: true, OR: [{ phone: code }, { code }] } });
+    const phone = normalizePhone(code);
+    const c = await this.prisma.customer.findFirst({ where: { isActive: true, OR: [...(phone ? [{ phone }] : []), { phone: code }, { code }] } });
     if (!c) throw new NotFoundException('Customer not found');
     return { ...c, pointsValue: valueOfPoints(c.points) };
   }
 
   async create(dto: CreateCustomerDto) {
     const customer = await this.prisma.customer.create({
-      data: { ...dto, code: dto.code ?? `M${Date.now().toString().slice(-8)}${randomInt(10, 99)}` },
+      data: { ...dto, phone: normalizePhone(dto.phone), code: dto.code ?? newMemberCode() },
     });
     await this.webhooks.emit('customer.created', customer);
     return customer;
   }
 
   update(id: string, dto: UpdateCustomerDto) {
-    return this.prisma.customer.update({ where: { id }, data: dto });
+    return this.prisma.customer.update({ where: { id }, data: { ...dto, ...(dto.phone !== undefined && { phone: normalizePhone(dto.phone) }) } });
   }
 
   async adjustPoints(id: string, dto: AdjustPointsDto) {

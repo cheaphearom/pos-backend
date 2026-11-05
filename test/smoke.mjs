@@ -415,5 +415,69 @@ ok((await pubCall('GET', `/orders/${o3.j.token}`)).j.status === 'CANCELLED', 'ca
 ok((await pubCall('GET', '/orders/not-a-real-token')).s === 404, 'unknown order link -> 404');
 ok((await pubCall('POST', '/stores/PP01/orders', { items: [{ productId: croissant.id, quantity: 1 }], customerName: '', payMethod: 'KHQR' })).s === 400, 'order without a name rejected');
 
+// ── Member app: phone login with a one-time code (MEMBER_OTP_MODE=dev returns the code)
+const otp = await call('POST', '/public/member/otp', { body: { phone: '+855 17 222 333' } });
+ok(otp.s === 200 && otp.j.phone === '017222333' && /^\d{6}$/.test(otp.j.devCode), 'member login code sent; +855 number stored as 017222333');
+ok((await call('POST', '/public/member/otp', { body: { phone: '017222333' } })).s === 400, 'a second code within 45 seconds is refused');
+ok((await call('POST', '/public/member/otp', { body: { phone: '12' } })).s === 400, 'bad phone number refused');
+const badTries = [];
+for (let i = 0; i < 5; i++) badTries.push((await call('POST', '/public/member/verify', { body: { phone: '017222333', code: otp.j.devCode === '111111' ? '222222' : '111111' } })).j.message);
+ok(/4 tries left/.test(badTries[0]) && (await call('POST', '/public/member/verify', { body: { phone: '017222333', code: otp.j.devCode } })).s === 400, 'after 5 wrong codes even the right code no longer works');
+const otpB = await call('POST', '/public/member/otp', { body: { phone: '098765432' } });
+const mv = await call('POST', '/public/member/verify', { body: { phone: '098 765 432', code: otpB.j.devCode } });
+ok(mv.s === 200 && mv.j.token && mv.j.member.name === 'Heng Malis', 'existing member logs in: Heng Malis');
+const mt = mv.j.token;
+ok((await call('POST', '/public/member/verify', { body: { phone: '098765432', code: otpB.j.devCode } })).s === 400, 'a code works only once');
+ok((await call('GET', '/stores', { token: mt })).s === 401, 'member token does not work on staff endpoints');
+ok((await call('GET', '/member/me', { token: admin })).s === 401, 'staff token does not work on member endpoints');
+const meB = (await call('GET', '/member/me', { token: mt })).j;
+ok(meB.points === 500 && meB.cards.length === 0, 'member sees own points (500), no wallet card');
+// New member
+const otpN = await call('POST', '/public/member/otp', { body: { phone: '0965554443' } });
+const needName = await call('POST', '/public/member/verify', { body: { phone: '0965554443', code: otpN.j.devCode } });
+ok(needName.j.needName === true, 'new number: asked for a name first');
+const nm = await call('POST', '/public/member/verify', { body: { phone: '0965554443', code: otpN.j.devCode, name: 'New App Member' } });
+ok(nm.s === 200 && nm.j.member.code.startsWith('M'), 'new member created with a member number ' + nm.j.member.code);
+ok((await call('GET', `/customers/lookup?code=${encodeURIComponent('+855 96 555 4443')}`, { token: cashier })).j.name === 'New App Member', 'POS finds the app member by phone in any format');
+ok((await call('GET', `/codes/lookup?code=${nm.j.member.code}&storeId=${pp01.id}`, { token: cashier })).j.kind === 'member', 'POS scanner recognises the member QR');
+// Order ahead with the account: points + KHQR
+const qB = await call('POST', '/public/stores/PP01/quote', { token: mt, body: { items: [{ productId: croissant.id, quantity: 2 }], redeemPoints: 100 } });
+ok(qB.s === 200 && qB.j.pointsDiscount === '1' && Number(qB.j.amountDue) === Number(qB.j.total) - 1, `member quote: 100 points = $1 off (${qB.j.total} → ${qB.j.amountDue})`);
+ok((await call('POST', '/public/stores/PP01/quote', { body: { items: [{ productId: croissant.id, quantity: 2 }], redeemPoints: 100 } })).s === 400, 'points need the member login');
+ok((await call('POST', '/public/stores/PP01/quote', { token: mt, body: { items: [{ productId: croissant.id, quantity: 1 }], redeemPoints: 500 } })).s === 400, 'points cannot pay the whole order');
+ok((await call('POST', '/public/stores/PP01/orders', { token: mt, body: { items: [{ productId: croissant.id, quantity: 1 }], payMethod: 'WALLET', walletCardId: '00000000-0000-4000-8000-000000000000' } })).s === 400, 'wallet payment needs one of the member\'s own cards');
+const oB = await call('POST', '/public/stores/PP01/orders', { token: mt, body: { items: [{ productId: croissant.id, quantity: 2 }], redeemPoints: 100, payMethod: 'KHQR' } });
+ok(oB.s === 201, 'member places a KHQR order without typing a name');
+const oBrow = (await call('GET', `/online-orders?storeId=${pp01.id}`, { token: cashier })).j.find((x) => x.customerId === meB.id);
+ok(oBrow && oBrow.customerName === 'Heng Malis' && oBrow.redeemPoints === 100 && oBrow.total === qB.j.amountDue, 'staff sees the member order with name, points and amount due');
+await call('POST', `/online-orders/${oBrow.id}/confirm-payment`, { token: cashier });
+const meB2 = (await call('GET', '/member/me', { token: mt })).j;
+ok(meB2.points === 500 - 100 + Math.floor(Number(qB.j.amountDue)), `after payment: points ${meB2.points} (used 100, earned ${Math.floor(Number(qB.j.amountDue))})`);
+const hist = (await call('GET', '/member/orders', { token: mt })).j;
+ok(hist.data.length === 1 && hist.data[0].channel === 'ONLINE' && hist.data[0].pointsRedeemed === 100, 'member history shows the order');
+const mRec = await call('GET', `/member/orders/${hist.data[0].id}`, { token: mt });
+ok(mRec.s === 200 && mRec.j.items[0].name === 'Butter Croissant' && mRec.j.payments[0].method === 'KHQR', 'member receipt detail');
+ok((await call('GET', `/member/orders/${hist.data[0].id}`, { token: nm.j.token })).s === 404, 'another member cannot open this receipt');
+ok((await call('GET', '/member/online-orders', { token: mt })).j[0].queueNo?.startsWith('A'), 'member sees the queue number of the order');
+ok((await call('GET', '/member/points', { token: mt })).j.data.length === 2, 'points history: used + earned');
+ok((await call('PATCH', '/member/me', { token: mt, body: { email: 'malis@example.com' } })).j.email === 'malis@example.com', 'member updates own email');
+// Wallet order: the seed card belongs to Chea Sokunthea (012345678)
+const otpA = await call('POST', '/public/member/otp', { body: { phone: '012345678' } });
+const ma = (await call('POST', '/public/member/verify', { body: { phone: '012345678', code: otpA.j.devCode } })).j.token;
+const meA = (await call('GET', '/member/me', { token: ma })).j;
+const cardA = meA.cards.find((c) => c.status === 'ACTIVE');
+if (cardA && Number(cardA.balance) >= 2) {
+  const wo = await call('POST', '/public/stores/PP01/orders', { token: ma, body: { items: [{ productId: croissant.id, quantity: 1 }], payMethod: 'WALLET', walletCardId: cardA.id } });
+  const ws = (await call('GET', `/public/orders/${wo.j.token}`)).j;
+  const meA2 = (await call('GET', '/member/me', { token: ma })).j;
+  ok(wo.s === 201 && ws.status === 'PAID' && ws.payMethod === 'WALLET' && ws.queueNo, 'wallet order is paid at once and goes to the barista (no PIN: logged in by code)');
+  ok(Number(meA2.cards.find((c) => c.id === cardA.id).balance) === Math.round((Number(cardA.balance) - Number(ws.total)) * 100) / 100, 'wallet balance went down by the order total');
+} else ok(false, 'demo wallet card has balance for the wallet test');
+const big = await call('POST', '/public/stores/PP01/orders', { token: ma, body: { items: [{ productId: croissant.id, quantity: 50 }], payMethod: 'WALLET', walletCardId: cardA?.id } });
+ok(big.s === 400 && /balance/.test(big.j.message), 'not enough wallet balance -> refused, nothing charged');
+// Log out on all phones
+await call('POST', '/member/logout-all', { token: mt });
+ok((await call('GET', '/member/me', { token: mt })).s === 401, 'log out everywhere: the old token stops working');
+
 await new Promise((r) => setTimeout(r, 2500));
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

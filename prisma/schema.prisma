@@ -300,10 +300,16 @@ model Customer {
   totalSpent  Decimal  @default(0) @map("total_spent") @db.Decimal(14, 2)
   visitCount  Int      @default(0) @map("visit_count")
   isActive    Boolean  @default(true) @map("is_active")
+  /// First login in the member app
+  appJoinedAt     DateTime? @map("app_joined_at")
+  appLastSeenAt   DateTime? @map("app_last_seen_at")
+  /// Raising this logs the member out of the app on every phone
+  appTokenVersion Int       @default(0) @map("app_token_version")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
   sales        Sale[]
+  onlineOrders OnlineOrder[]
   loyaltyTxns  LoyaltyTransaction[]
   walletCards  WalletCard[]
 
@@ -1042,11 +1048,34 @@ model OnlineOrder {
   couponCode   String?           @map("coupon_code") @db.VarChar(40)
   total        Decimal           @db.Decimal(14, 2) // quoted when ordered
   khqrMd5      String?           @map("khqr_md5") @db.VarChar(32)
+  /// Placed from the member app while logged in
+  customerId   String?           @map("customer_id") @db.Uuid
+  /// Member app: paid from this wallet card
+  walletCardId String?           @map("wallet_card_id") @db.Uuid
+  redeemPoints Int               @default(0) @map("redeem_points")
   saleId       String?           @unique @map("sale_id") @db.Uuid
   error        String?
   createdAt    DateTime          @default(now()) @map("created_at")
   paidAt       DateTime?         @map("paid_at")
 
+  customer Customer? @relation(fields: [customerId], references: [id])
+
   @@index([storeId, status, createdAt])
+  @@index([customerId, createdAt])
   @@map("online_orders")
+}
+
+/// One-time login codes for the member app (sent by SMS / Telegram)
+model MemberOtp {
+  id        String    @id @default(uuid()) @db.Uuid
+  phone     String    @db.VarChar(30)
+  codeHash  String    @map("code_hash")
+  attempts  Int       @default(0)
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  ip        String?   @db.VarChar(64)
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([phone, createdAt])
+  @@map("member_otps")
 }

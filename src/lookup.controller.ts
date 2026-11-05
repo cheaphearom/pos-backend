@@ -1,11 +1,12 @@
 import { Controller, Get, Module, NotFoundException, ParseUUIDPipe, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { CouponsModule, CouponsService } from './coupons/coupons.module';
+import { PrismaService } from './prisma/prisma.service';
 import { VouchersModule, VouchersService } from './vouchers/vouchers.module';
 import { WalletModule } from './wallet/wallet.module';
 import { WalletService } from './wallet/wallet.service';
 
-/** POS scanner: "what is this code?" (wallet card, gift voucher or coupon). Products are found on the device. */
+/** POS scanner: "what is this code?" (wallet card, member QR from the app, gift voucher or coupon). Products are found on the device. */
 @ApiTags('POS')
 @ApiBearerAuth()
 @Controller('codes')
@@ -14,6 +15,7 @@ export class LookupController {
     private readonly wallet: WalletService,
     private readonly vouchers: VouchersService,
     private readonly coupons: CouponsService,
+    private readonly prisma: PrismaService,
   ) {}
 
   @Get('lookup')
@@ -23,6 +25,9 @@ export class LookupController {
       const card = await this.wallet.lookup(code).catch(() => null);
       if (card) return { kind: 'wallet', card };
     }
+    // Member QR in the member app = the member number
+    const member = await this.prisma.customer.findFirst({ where: { code, isActive: true }, select: { id: true, name: true, code: true, phone: true, points: true } });
+    if (member) return { kind: 'member', customer: member };
     const voucher = await this.vouchers.lookup(code).catch(() => null);
     if (voucher) return { kind: 'voucher', voucher };
     try {

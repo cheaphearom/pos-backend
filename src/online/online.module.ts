@@ -1,12 +1,15 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, Injectable, Logger, Module, NotFoundException, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Headers, HttpCode, Injectable, Logger, Module, NotFoundException, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { OnlineOrderStatus, Prisma } from '@prisma/client';
+import { Customer, OnlineOrderStatus, Prisma } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { randomBytes } from 'crypto';
 import { CurrentPrincipal, Public } from '../common/decorators';
 import { assertStoreAccess, Principal } from '../common/principal';
+import { valueOfPoints } from '../customers/loyalty';
+import { normalizePhone } from '../customers/phone';
+import { MemberAuthService, MemberModule } from '../member/member.module';
 import { KhqrService, PaymentsModule } from '../payments/payments.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { SalesModule } from '../sales/sales.module';
@@ -32,11 +35,16 @@ export class QuoteDto {
 
   @IsOptional() @IsString() @MaxLength(40)
   couponCode?: string;
+
+  /** Member app only: pay part of the order with points */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0)
+  redeemPoints?: number;
 }
 
 export class CreateOnlineOrderDto extends QuoteDto {
-  @IsString() @MinLength(1) @MaxLength(80)
-  customerName: string;
+  /** Required unless logged in to the member app */
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(80)
+  customerName?: string;
 
   @IsOptional() @Matches(/^[0-9+ ]{6,20}$/, { message: 'Phone number looks wrong' })
   phone?: string;
@@ -48,8 +56,12 @@ export class CreateOnlineOrderDto extends QuoteDto {
   @IsOptional() @IsString() @MaxLength(20)
   tableNo?: string;
 
-  @IsIn(['KHQR', 'COUNTER'])
-  payMethod: 'KHQR' | 'COUNTER';
+  /** WALLET: member app only, pays from the member's wallet card */
+  @IsIn(['KHQR', 'COUNTER', 'WALLET'])
+  payMethod: 'KHQR' | 'COUNTER' | 'WALLET';
+
+  @IsOptional() @IsUUID()
+  walletCardId?: string;
 }
 
 const PAY_MINUTES = 20; // an unpaid KHQR order expires after this
@@ -108,30 +120,70 @@ export class OnlineOrdersService {
     };
   }
 
-  async quote(code: string, dto: QuoteDto) {
+  /** Prices from the server; a logged-in member may also use points. */
+  async quote(code: string, dto: QuoteDto, member: Customer | null) {
     const store = await this.storeByCode(code);
-    return this.sales.quote({ storeId: store.id, items: dto.items, couponCode: dto.couponCode || undefined }, { online: true });
+    return this.priced(store.id, dto, member);
   }
 
-  async create(code: string, dto: CreateOnlineOrderDto) {
+  private async priced(storeId: string, dto: QuoteDto, member: Customer | null) {
+    const q = await this.sales.quote({ storeId, items: dto.items, couponCode: dto.couponCode || undefined, customerId: member?.id }, { online: true });
+    const redeem = dto.redeemPoints ?? 0;
+    let pointsDiscount = new Prisma.Decimal(0);
+    if (redeem) {
+      if (!member) throw new BadRequestException('Log in to the member app to use points');
+      if (redeem > member.points) throw new BadRequestException(`You have ${member.points} points`);
+      pointsDiscount = valueOfPoints(redeem);
+      if (pointsDiscount.gte(q.total)) throw new BadRequestException('Points can pay part of the order, not all of it');
+    }
+    return { ...q, pointsRedeemed: redeem, pointsDiscount, amountDue: new Prisma.Decimal(q.total).minus(pointsDiscount) };
+  }
+
+  async create(code: string, dto: CreateOnlineOrderDto, member: Customer | null) {
     const store = await this.storeByCode(code);
+    const customerName = (dto.customerName?.trim() || member?.name || '').slice(0, 80);
+    if (!customerName) throw new BadRequestException('Please enter your name');
     if (dto.payMethod === 'KHQR' && !store.khqrAccountId) throw new BadRequestException('KHQR is not available in this store; choose pay at counter');
-    const quote = await this.sales.quote({ storeId: store.id, items: dto.items, couponCode: dto.couponCode || undefined }, { online: true });
+    const quote = await this.priced(store.id, dto, member);
+
+    let walletCardId: string | null = null;
+    if (dto.payMethod === 'WALLET') {
+      if (!member) throw new BadRequestException('Log in to the member app to pay with your wallet');
+      const card = await this.prisma.walletCard.findFirst({ where: { id: dto.walletCardId, customerId: member.id } });
+      if (!dto.walletCardId || !card) throw new BadRequestException('Choose one of your wallet cards');
+      if (card.status !== 'ACTIVE') throw new BadRequestException(`Your wallet card is ${card.status}`);
+      if (card.balance.lt(quote.amountDue)) throw new BadRequestException(`Your wallet balance is ${card.balance}. Top up at the counter or choose another payment.`);
+      walletCardId = card.id;
+    }
+
     const token = randomBytes(24).toString('base64url');
     let khqrMd5: string | undefined;
     if (dto.payMethod === 'KHQR') {
-      const k = await this.khqr.create(this.principal(store.id), { storeId: store.id, amount: Number(quote.total) });
+      const k = await this.khqr.create(this.principal(store.id), { storeId: store.id, amount: Number(quote.amountDue) });
       khqrMd5 = k.md5;
     }
     const order = await this.prisma.onlineOrder.create({
       data: {
-        token, storeId: store.id, status: dto.payMethod === 'KHQR' ? 'PENDING_PAYMENT' : 'PAY_AT_COUNTER',
+        token, storeId: store.id, status: dto.payMethod === 'COUNTER' ? 'PAY_AT_COUNTER' : 'PENDING_PAYMENT',
         orderType: dto.tableNo ? 'DINE_IN' : 'PICKUP', tableNo: dto.tableNo || null,
-        customerName: dto.customerName.trim(), phone: dto.phone?.replace(/\s/g, '') || null, note: dto.note || null,
-        items: JSON.parse(JSON.stringify({ request: dto.items, lines: quote.lines, totals: { subtotal: quote.subtotal, discountTotal: quote.discountTotal, taxTotal: quote.taxTotal } })),
-        couponCode: dto.couponCode || null, total: quote.total, khqrMd5,
+        customerName, phone: normalizePhone(dto.phone) || member?.phone || null, note: dto.note || null,
+        items: JSON.parse(JSON.stringify({
+          request: dto.items, lines: quote.lines,
+          totals: { subtotal: quote.subtotal, discountTotal: quote.discountTotal, taxTotal: quote.taxTotal, total: quote.total, pointsDiscount: quote.pointsDiscount },
+        })),
+        couponCode: dto.couponCode || null, total: quote.amountDue, khqrMd5,
+        customerId: member?.id ?? null, walletCardId, redeemPoints: quote.pointsRedeemed,
       },
     });
+
+    if (walletCardId) {
+      // Wallet: pay right now. If it fails nothing was taken, so the order is simply cancelled.
+      const done = await this.finalize(order.id);
+      if (done.status !== 'PAID') {
+        await this.prisma.onlineOrder.update({ where: { id: order.id }, data: { status: 'CANCELLED' } });
+        throw new BadRequestException(done.error ?? 'Payment failed');
+      }
+    }
     return { token: order.token };
   }
 
@@ -158,7 +210,10 @@ export class OnlineOrdersService {
     const order = await this.prisma.onlineOrder.findUniqueOrThrow({ where: { id: orderId } });
     if (order.status === 'PAID') return order;
     const req = (order.items as any).request;
-    const member = order.phone ? await this.prisma.customer.findUnique({ where: { phone: order.phone } }) : null;
+    const member = order.customerId
+      ? await this.prisma.customer.findUnique({ where: { id: order.customerId } })
+      : order.phone ? await this.prisma.customer.findUnique({ where: { phone: order.phone } }) : null;
+    const card = order.walletCardId ? await this.prisma.walletCard.findUniqueOrThrow({ where: { id: order.walletCardId } }) : null;
     try {
       const sale = await this.sales.create(this.principal(order.storeId), {
         storeId: order.storeId,
@@ -168,10 +223,13 @@ export class OnlineOrdersService {
         tableNo: order.tableNo ?? undefined,
         customerId: member?.isActive ? member.id : undefined,
         couponCode: order.couponCode ?? undefined,
+        redeemPoints: order.redeemPoints || undefined,
         items: req,
-        payments: [{ method: 'KHQR', amount: Number(order.total), reference: order.khqrMd5! }],
-        note: ['Online', order.customerName, order.phone, order.note].filter(Boolean).join(' · ').slice(0, 500),
-      } as any);
+        payments: [card
+          ? { method: 'WALLET', amount: Number(order.total), reference: card.cardNumber }
+          : { method: 'KHQR', amount: Number(order.total), reference: order.khqrMd5! }],
+        note: [order.customerId ? 'App' : 'Online', order.customerName, order.phone, order.note].filter(Boolean).join(' · ').slice(0, 500),
+      } as any, { walletVerified: !!card });
       return this.prisma.onlineOrder.update({ where: { id: order.id }, data: { status: 'PAID', saleId: sale.id, paidAt: new Date(), error: null } });
     } catch (e) {
       this.log.error(`Online order ${order.id} paid but sale failed: ${(e as Error).message}`);
@@ -219,7 +277,9 @@ export class OnlineOrdersService {
   private view(o: Prisma.OnlineOrderGetPayload<object>, publicView: boolean) {
     const items = o.items as any;
     return {
-      ...(publicView ? {} : { id: o.id, phone: o.phone, error: o.error, saleId: o.saleId }),
+      ...(publicView ? {} : { id: o.id, phone: o.phone, error: o.error, saleId: o.saleId, customerId: o.customerId }),
+      payMethod: o.walletCardId ? 'WALLET' : o.khqrMd5 ? 'KHQR' : 'COUNTER',
+      redeemPoints: o.redeemPoints, member: !!o.customerId,
       status: o.status as OnlineOrderStatus,
       orderType: o.orderType, tableNo: o.tableNo, customerName: o.customerName, note: o.note,
       lines: items.lines, totals: items.totals, total: o.total, couponCode: o.couponCode,
@@ -235,6 +295,7 @@ export class OnlineOrdersController {
   constructor(
     private readonly online: OnlineOrdersService,
     private readonly prisma: PrismaService,
+    private readonly members: MemberAuthService,
   ) {}
 
   // ─── Public (customers' phones). No login; rate limited per IP. ───
@@ -248,15 +309,16 @@ export class OnlineOrdersController {
   @Public()
   @HttpCode(200)
   @Post('public/stores/:code/quote')
-  quote(@Param('code') code: string, @Body() dto: QuoteDto) {
-    return this.online.quote(code, dto);
+  async quote(@Param('code') code: string, @Body() dto: QuoteDto, @Headers('authorization') auth?: string) {
+    return this.online.quote(code, dto, await this.members.fromHeader(auth));
   }
 
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('public/stores/:code/orders')
-  create(@Param('code') code: string, @Body() dto: CreateOnlineOrderDto) {
-    return this.online.create(code, dto);
+  async create(@Param('code') code: string, @Body() dto: CreateOnlineOrderDto, @Headers('authorization') auth?: string) {
+    // Logged in to the member app → the order is linked to the account (points, wallet, history).
+    return this.online.create(code, dto, await this.members.fromHeader(auth));
   }
 
   /** Status page: order, payment, queue number and preparation progress. */
@@ -303,5 +365,5 @@ export class OnlineOrdersController {
   }
 }
 
-@Module({ imports: [SalesModule, PaymentsModule], controllers: [OnlineOrdersController], providers: [OnlineOrdersService] })
+@Module({ imports: [SalesModule, PaymentsModule, MemberModule], controllers: [OnlineOrdersController], providers: [OnlineOrdersService] })
 export class OnlineModule {}

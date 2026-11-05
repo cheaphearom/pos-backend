@@ -50,7 +50,11 @@ export class SalesService {
    * Checkout. Everything (stock, points, receipt number, payments) happens in ONE
    * database transaction: either the whole sale is saved or nothing is.
    */
-  async create(p: Principal, dto: CreateSaleDto) {
+  /**
+   * @param opts.walletVerified the wallet owner already proved who they are (member app login),
+   *        so the card PIN is not asked again.
+   */
+  async create(p: Principal, dto: CreateSaleDto, opts: { walletVerified?: boolean } = {}) {
     assertStoreAccess(p, dto.storeId);
 
     if (dto.clientRef) {
@@ -94,7 +98,7 @@ export class SalesService {
     if (offlineAt && dto.payments.some((x) => x.method === 'VOUCHER')) throw new BadRequestException('Vouchers need a connection and cannot be used offline');
     const usesWallet = dto.payments.some((x) => x.method === 'WALLET');
     if (usesWallet && offlineAt) throw new BadRequestException('Wallet card payments need a connection and cannot be made offline');
-    if (usesWallet) await this.wallet.verifyForPayment(dto.payments); // PIN checks, outside the transaction
+    if (usesWallet && !opts.walletVerified) await this.wallet.verifyForPayment(dto.payments); // PIN checks, outside the transaction
 
     const shift = userId
       ? await this.prisma.shift.findFirst({ where: { storeId: dto.storeId, userId, status: 'OPEN' }, select: { id: true } })
