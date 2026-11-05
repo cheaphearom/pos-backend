@@ -1,6 +1,6 @@
 import { PaymentMethod, SaleStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { DateRangeQueryDto } from '../common/date-range';
 
 export class SaleItemDto {
@@ -66,6 +66,14 @@ export class CreateSaleDto {
 
   @IsOptional() @IsString() @MaxLength(500)
   note?: string;
+
+  /**
+   * When the POS was offline: the time the sale really happened. The sale is then
+   * accepted even if stock is short (the goods already left the store), and dated at this time.
+   * Must be within the last 7 days. Requires clientRef.
+   */
+  @IsOptional() @IsDateString()
+  offlineCreatedAt?: string;
 }
 
 export class RefundItemDto {

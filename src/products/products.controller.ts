@@ -19,6 +19,13 @@ export class ProductsController {
     return this.products.list(p, q);
   }
 
+  /** Every product with store price and stock, for offline POS. Use `since` for changes only. */
+  @Scopes('products:read')
+  @Get('catalog')
+  catalog(@CurrentPrincipal() p: Principal, @Query('storeId', ParseUUIDPipe) storeId: string, @Query('since') since?: string) {
+    return this.products.catalog(p, storeId, since);
+  }
+
   /** Find a product by barcode or SKU, with price and stock for the store. */
   @Scopes('products:read')
   @Get('lookup')

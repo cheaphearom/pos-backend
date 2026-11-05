@@ -44,6 +44,16 @@ export class SalesService {
       if (existing) return existing; // already processed (retry / offline re-sync)
     }
 
+    let offlineAt: Date | undefined;
+    if (dto.offlineCreatedAt) {
+      if (!dto.clientRef) throw new BadRequestException('Offline sales need a clientRef');
+      offlineAt = new Date(dto.offlineCreatedAt);
+      const now = Date.now();
+      if (offlineAt.getTime() > now + 5 * 60_000 || offlineAt.getTime() < now - 7 * 86_400_000) {
+        throw new BadRequestException('offlineCreatedAt must be within the last 7 days');
+      }
+    }
+
     const store = await this.prisma.store.findUniqueOrThrow({ where: { id: dto.storeId } });
     if (!store.isActive) throw new BadRequestException('Store is inactive');
 
@@ -129,6 +139,7 @@ export class SalesService {
               amountPaid: paid,
               changeDue,
               note: dto.note,
+              ...(offlineAt && { createdAt: offlineAt }),
               items: {
                 create: lines.map((l, i) => ({
                   lineNo: i + 1,
@@ -162,6 +173,8 @@ export class SalesService {
                 referenceType: 'SALE',
                 referenceId: receiptNo,
                 userId,
+                // An offline sale already happened in the real world; never reject it for stock.
+                ...(offlineAt && { allowNegative: true, note: 'Offline sale' }),
               }),
             );
           }

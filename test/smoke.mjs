@@ -126,5 +126,21 @@ ok(rf.s === 200 && rf.j.accessToken, 'refresh token works');
 ok((await call('POST', '/auth/refresh', { body: { refreshToken: lg.refreshToken } })).s === 401, 'reused refresh token rejected');
 ok((await call('POST', '/auth/refresh', { body: { refreshToken: rf.j.refreshToken } })).s === 401, 'after reuse, all sessions logged out');
 
+// Offline POS support
+const cat = await call('GET', `/products/catalog?storeId=${pp01.id}`, { token: cashier });
+ok(cat.s === 200 && cat.j.full && cat.j.products.length >= 30 && cat.j.products[0].price, `catalog download: ${cat.j.products?.length} products`);
+const delta = await call('GET', `/products/catalog?storeId=${pp01.id}&since=${encodeURIComponent(cat.j.serverTime)}`, { token: cashier });
+ok(delta.s === 200 && !delta.j.full && delta.j.products.length === 0, 'catalog since=now returns no changes');
+const offRef = 'offline-' + Date.now();
+const offAt = new Date(Date.now() - 3600_000).toISOString();
+const off = await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, clientRef: offRef, offlineCreatedAt: offAt, items: [{ productId: choc.id, quantity: 2 }], payments: [{ method: 'CASH', amount: 5 }] } });
+ok(off.s === 201 && off.j.createdAt === offAt, 'offline sale accepted with its real time even though stock is 0');
+const chocNeg = (await call('GET', `/products/lookup?code=SKU-0010&storeId=${pp01.id}`, { token: mgr })).j;
+ok(Number(chocNeg.stock) === -2, `offline sale may push stock negative (${chocNeg.stock})`);
+ok((await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, offlineCreatedAt: offAt, items: [{ productId: water.id, quantity: 1 }], payments: [{ method: 'CASH', amount: 5 }] } })).s === 400, 'offline sale without clientRef rejected');
+ok((await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, clientRef: offRef + 'x', offlineCreatedAt: new Date(Date.now() - 10 * 86400_000).toISOString(), items: [{ productId: water.id, quantity: 1 }], payments: [{ method: 'CASH', amount: 5 }] } })).s === 400, 'offline sale older than 7 days rejected');
+const dir = await call('GET', '/stores/directory', { token: cashier });
+ok(dir.s === 200 && dir.j.length === 3, 'store directory lists all stores');
+
 await new Promise((r) => setTimeout(r, 2500));
 console.log(fails ? `\n${fails} FAILED` : '\nALL PASSED');

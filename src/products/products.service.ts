@@ -52,6 +52,38 @@ export class ProductsService {
     return withStorePrice(product, storeId);
   }
 
+  /**
+   * Compact list of every active product with this store's price and stock, for the POS
+   * to keep offline. With `since`, only products whose data changed after that time
+   * (including deactivated ones, so the POS can remove them).
+   */
+  async catalog(p: Principal, storeId: string, since?: string) {
+    assertStoreAccess(p, storeId);
+    const sinceDate = since ? new Date(since) : undefined;
+    if (sinceDate && isNaN(sinceDate.getTime())) throw new NotFoundException('Invalid since date');
+    const serverTime = new Date().toISOString();
+    const rows = await this.prisma.product.findMany({
+      where: sinceDate
+        ? { OR: [{ updatedAt: { gt: sinceDate } }, { inventory: { some: { storeId, updatedAt: { gt: sinceDate } } } }] }
+        : { isActive: true },
+      select: {
+        id: true, sku: true, barcode: true, name: true, unit: true, sellPrice: true, taxable: true,
+        trackStock: true, isActive: true, categoryId: true,
+        inventory: { where: { storeId }, select: { quantity: true, priceOverride: true } },
+      },
+      orderBy: { name: 'asc' },
+    });
+    return {
+      serverTime,
+      full: !sinceDate,
+      products: rows.map(({ inventory, sellPrice, ...r }) => ({
+        ...r,
+        price: inventory[0]?.priceOverride ?? sellPrice,
+        stock: inventory[0]?.quantity ?? '0',
+      })),
+    };
+  }
+
   /** Fast lookup for the POS screen: barcode scan or exact SKU. */
   async lookup(p: Principal, code: string, storeId: string) {
     assertStoreAccess(p, storeId);
