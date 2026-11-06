@@ -182,6 +182,8 @@ model RefreshToken {
 model Category {
   id        String   @id @default(uuid()) @db.Uuid
   name      String   @db.VarChar(100)
+  /// Khmer name
+  nameKm    String?    @map("name_km") @db.VarChar(100)
   parentId  String?  @map("parent_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -200,6 +202,8 @@ model Product {
   sku         String   @unique @db.VarChar(50)
   barcode     String?  @unique @db.VarChar(64)
   name        String   @db.VarChar(200)
+  /// Khmer name, shown when the screen is in Khmer
+  nameKm      String?  @map("name_km") @db.VarChar(200)
   description String?
   categoryId  String?  @map("category_id") @db.Uuid
   unit        String   @default("pcs") @db.VarChar(20)
@@ -445,6 +449,7 @@ model SaleItem {
   productId    String  @map("product_id") @db.Uuid
   sku          String  @db.VarChar(50) // snapshot at time of sale
   name         String  @db.VarChar(200)
+  nameKm       String? @map("name_km") @db.VarChar(200) // Khmer name at the time of sale (receipts)
   quantity     Decimal @db.Decimal(14, 3)
   unitPrice    Decimal @map("unit_price") @db.Decimal(14, 2)
   costPrice    Decimal @map("cost_price") @db.Decimal(14, 6) // per unit at the time of sale (recipe cost for drinks)

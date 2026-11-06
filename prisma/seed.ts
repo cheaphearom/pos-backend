@@ -287,6 +287,26 @@ async function main() {
   }
 
   console.log(`Seeded ${stores.length} stores, ${n} products, ${customers.length} customers.`);
+  // Khmer names (shown when the screen is in Khmer)
+  const KHMER_NAMES: Record<string, string> = {
+    'Mineral Water 500ml': 'ទឹកសុទ្ធ 500ml', 'Coca-Cola 330ml': 'កូកាកូឡា 330ml', 'Iced Coffee': 'កាហ្វេទឹកកក', 'Green Tea 500ml': 'តែបៃតង 500ml',
+    'Orange Juice 1L': 'ទឹកក្រូច 1L', 'Energy Drink 250ml': 'ភេសជ្ជៈប៉ូវកម្លាំង 250ml', 'Beer 330ml': 'ស្រាបៀរ 330ml', 'Soy Milk 250ml': 'ទឹកសណ្តែក 250ml',
+    'Potato Chips 70g': 'ដំឡូងបារាំងចៀន 70g', 'Chocolate Bar': 'សូកូឡា', 'Instant Noodles': 'មីកញ្ចប់', 'Biscuits 200g': 'នំប៊ីសគី 200g',
+    'Peanuts 150g': 'សណ្តែកដី 150g', 'Dried Mango 100g': 'ស្វាយក្រៀម 100g', Bananas: 'ចេក', Apples: 'ផ្លែប៉ោម', 'Jasmine Rice 5kg': 'អង្ករម្លិះ 5kg',
+    'Eggs (10)': 'ពងមាន់ (10)', 'Chicken Breast': 'សាច់ទ្រូងមាន់', 'Bread Loaf': 'នំប៉័ង', 'Laundry Detergent 1kg': 'សាប៊ូបោកខោអាវ 1kg',
+    'Dish Soap 500ml': 'សាប៊ូលាងចាន 500ml', 'Toilet Paper (10)': 'ក្រដាសអនាម័យ (10)', 'Trash Bags (30)': 'ថង់សំរាម (30)', 'Light Bulb LED 9W': 'អំពូល LED 9W',
+    'Batteries AA (4)': 'ថ្មពិល AA (4)', 'Shampoo 400ml': 'សាប៊ូកក់សក់ 400ml', 'Toothpaste 150g': 'ថ្នាំដុសធ្មេញ 150g', 'Soap Bar': 'សាប៊ូដុំ',
+    'Hand Sanitizer 250ml': 'ជែលលាងដៃ 250ml', 'Sunscreen SPF50': 'ឡេការពារកម្តៅថ្ងៃ SPF50', Deodorant: 'ទឹកអប់ក្លៀក',
+    Americano: 'អាមេរិកាណូ', Latte: 'ឡាតេ', 'Iced Latte': 'ឡាតេទឹកកក', Cappuccino: 'កាពូឈីណូ', 'Iced Matcha Latte': 'ម៉ាចាឡាតេទឹកកក',
+    'Iced Lemon Tea': 'តែក្រូចឆ្មាទឹកកក', 'Butter Croissant': 'នំក្រូសង់ប៊ឺ', 'Chocolate Muffin': 'នំម៉ាហ្វីនសូកូឡា',
+  };
+  for (const [name, nameKm] of Object.entries(KHMER_NAMES)) await prisma.product.updateMany({ where: { name, nameKm: null }, data: { nameKm } });
+  const KHMER_CATEGORIES: Record<string, string> = {
+    Beverages: 'ភេសជ្ជៈ', Snacks: 'អាហារសម្រន់', 'Fresh Food': 'អាហារស្រស់', Household: 'គ្រឿងប្រើប្រាស់ក្នុងផ្ទះ', 'Personal Care': 'ថែទាំខ្លួន',
+    'Coffee & Tea': 'កាហ្វេ និងតែ', Bakery: 'នំ', Ingredients: 'គ្រឿងផ្សំ',
+  };
+  for (const [name, nameKm] of Object.entries(KHMER_CATEGORIES)) await prisma.category.updateMany({ where: { name, nameKm: null }, data: { nameKm } });
+
   console.log('Login: admin@pos.local / Password@123 (also manager.pp@, manager.sr@, cashier1@, cashier2@, cashier3@)');
   console.log('Manager approval PINs: manager.pp 2580, manager.sr 1397, admin 9024');
 }

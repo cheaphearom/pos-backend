@@ -1,13 +1,17 @@
 import { Body, Controller, Delete, Get, HttpCode, Injectable, Module, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags, PartialType } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
-import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
 import { Roles, Scopes } from '../common/decorators';
 import { PrismaService } from '../prisma/prisma.service';
 
 export class CreateCategoryDto {
   @IsString() @MaxLength(100)
   name: string;
+
+  /** Khmer name */
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(100)
+  nameKm?: string | null;
 
   @IsOptional() @IsUUID()
   parentId?: string;

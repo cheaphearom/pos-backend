@@ -69,7 +69,7 @@ export class ProductsService {
         ? { OR: [{ updatedAt: { gt: sinceDate } }, { inventory: { some: { storeId, updatedAt: { gt: sinceDate } } } }] }
         : { isActive: true, isIngredient: false },
       select: {
-        id: true, sku: true, barcode: true, name: true, unit: true, sellPrice: true, taxable: true,
+        id: true, sku: true, barcode: true, name: true, nameKm: true, unit: true, sellPrice: true, taxable: true,
         trackStock: true, isActive: true, categoryId: true, imageUrl: true, isIngredient: true,
         inventory: { where: { storeId }, select: { quantity: true, priceOverride: true } },
         modifierGroups: { orderBy: { sortOrder: 'asc' }, select: { groupId: true } },

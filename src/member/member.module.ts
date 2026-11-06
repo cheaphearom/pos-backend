@@ -236,12 +236,12 @@ export class MemberService {
         select: {
           id: true, receiptNo: true, status: true, channel: true, orderType: true, queueNo: true, total: true, amountDue: true,
           pointsEarned: true, pointsRedeemed: true, createdAt: true, store: { select: { code: true, name: true } },
-          items: { select: { name: true, quantity: true }, orderBy: { lineNo: 'asc' } },
+          items: { select: { name: true, nameKm: true, quantity: true }, orderBy: { lineNo: 'asc' } },
         },
       }),
       this.prisma.sale.count({ where }),
     ]);
-    return toPage(rows.map(({ items, ...s }) => ({ ...s, itemCount: items.reduce((n, i) => n + Number(i.quantity), 0), summary: items.slice(0, 3).map((i) => i.name).join(', ') + (items.length > 3 ? '…' : '') })), total, q);
+    return toPage(rows.map(({ items, ...s }) => ({ ...s, itemCount: items.reduce((n, i) => n + Number(i.quantity), 0), summary: items.slice(0, 3).map((i) => i.name).join(', ') + (items.length > 3 ? '…' : ''), summaryKm: items.slice(0, 3).map((i) => i.nameKm || i.name).join(', ') + (items.length > 3 ? '…' : '') })), total, q);
   }
 
   async order(c: Customer, id: string) {
@@ -251,7 +251,7 @@ export class MemberService {
         id: true, receiptNo: true, status: true, channel: true, orderType: true, tableNo: true, queueNo: true, kitchenStatus: true,
         subtotal: true, discountTotal: true, taxTotal: true, total: true, pointsDiscount: true, pointsRedeemed: true, amountDue: true, pointsEarned: true,
         couponName: true, createdAt: true, store: { select: { code: true, name: true, address: true, currency: true } },
-        items: { orderBy: { lineNo: 'asc' }, select: { productId: true, name: true, quantity: true, unitPrice: true, lineTotal: true, discount: true, modifiers: true, note: true, refundedQty: true } },
+        items: { orderBy: { lineNo: 'asc' }, select: { productId: true, name: true, nameKm: true, quantity: true, unitPrice: true, lineTotal: true, discount: true, modifiers: true, note: true, refundedQty: true } },
         payments: { select: { method: true, amount: true } },
       },
     });

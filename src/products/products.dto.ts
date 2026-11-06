@@ -42,6 +42,10 @@ export class CreateProductDto {
   @IsOptional() @IsBoolean()
   isIngredient?: boolean;
 
+  /** Khmer name (shown when the screen is in Khmer) */
+  @IsOptional() @ValidateIf((_, v) => v !== null) @IsString() @MaxLength(200)
+  nameKm?: string | null;
+
   /** Shown on the online ordering menu */
   @IsOptional() @IsBoolean()
   onlineAvailable?: boolean;

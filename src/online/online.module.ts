@@ -93,7 +93,7 @@ export class OnlineOrdersService {
     const products = await this.prisma.product.findMany({
       where: { isActive: true, isIngredient: false, onlineAvailable: true },
       select: {
-        id: true, name: true, description: true, imageUrl: true, sellPrice: true, unit: true, categoryId: true,
+        id: true, name: true, nameKm: true, description: true, imageUrl: true, sellPrice: true, unit: true, categoryId: true,
         inventory: { where: { storeId: store.id }, select: { priceOverride: true, quantity: true } }, trackStock: true,
         modifierGroups: { orderBy: { sortOrder: 'asc' }, select: { groupId: true } },
       },
@@ -105,7 +105,7 @@ export class OnlineOrdersService {
         where: { id: { in: groupIds }, isActive: true },
         include: { options: { where: { isActive: true }, orderBy: { sortOrder: 'asc' }, select: { id: true, name: true, priceDelta: true, isDefault: true } } },
       }),
-      this.prisma.category.findMany({ where: { id: { in: [...new Set(products.map((p) => p.categoryId).filter(Boolean) as string[])] } }, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      this.prisma.category.findMany({ where: { id: { in: [...new Set(products.map((p) => p.categoryId).filter(Boolean) as string[])] } }, select: { id: true, name: true, nameKm: true }, orderBy: { name: 'asc' } }),
     ]);
     return {
       store: { code: store.code, name: store.name, address: store.address, currency: store.currency, khqr: !!store.khqrAccountId },

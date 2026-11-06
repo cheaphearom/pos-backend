@@ -199,6 +199,7 @@ export class SalesService {
                   productId: l.prod.id,
                   sku: l.prod.sku,
                   name: l.prod.name,
+                  nameKm: l.prod.nameKm,
                   quantity: l.item.quantity,
                   unitPrice: l.unitPrice,
                   costPrice: usage[i].unitCost !== null ? D(usage[i].unitCost!).toDecimalPlaces(6) : l.prod.costPrice,
@@ -408,7 +409,7 @@ export class SalesService {
     const { lines, priced, coupon } = await this.buildPricing(dto, store, undefined, opts);
     return {
       lines: lines.map((l, i) => ({
-        productId: l.prod.id, name: l.prod.name, quantity: l.item.quantity, unitPrice: l.unitPrice, modifiers: l.modifiers, note: l.item.note ?? null,
+        productId: l.prod.id, name: l.prod.name, nameKm: l.prod.nameKm, quantity: l.item.quantity, unitPrice: l.unitPrice, modifiers: l.modifiers, note: l.item.note ?? null,
         promotion: l.promotionId ? { id: l.promotionId, discount: l.promo } : null, total: priced.lines[i].total,
       })),
       subtotal: priced.subtotal, discountTotal: priced.discountTotal, taxTotal: priced.taxTotal, total: priced.total,
