@@ -111,6 +111,10 @@ export class RequestApprovalDto {
   @IsOptional() @IsUUID()
   saleId?: string;
 
+  /** CASH_OUT: the dollar value taken out of the drawer */
+  @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01)
+  amount?: number;
+
   @IsOptional() @IsString() @MaxLength(200)
   reason?: string;
 }
@@ -124,7 +128,7 @@ export class SetPinDto {
   pin: string;
 }
 
-export const ACTION_LABEL: Record<ApprovalAction, string> = { DISCOUNT: 'discount', REFUND: 'refund', VOID: 'void' };
+export const ACTION_LABEL: Record<ApprovalAction, string> = { DISCOUNT: 'discount', REFUND: 'refund', VOID: 'void', CASH_OUT: 'cash out' };
 
 @Injectable()
 export class ApprovalsService {
@@ -138,7 +142,8 @@ export class ApprovalsService {
     if (p.kind !== 'user') throw new ForbiddenException('Approvals are for POS users');
     assertStoreAccess(p, dto.storeId);
     if (dto.action === 'DISCOUNT' && dto.percent === undefined) throw new BadRequestException('Say which discount % to approve');
-    if (dto.action !== 'DISCOUNT' && !dto.saleId) throw new BadRequestException('Say which sale');
+    if ((dto.action === 'REFUND' || dto.action === 'VOID') && !dto.saleId) throw new BadRequestException('Say which sale');
+    if (dto.action === 'CASH_OUT' && !dto.amount) throw new BadRequestException('Say how much is taken out');
     // 5 wrong PINs in 15 minutes from this user: wait (stops guessing a 4-digit PIN).
     const recentFails = await this.prisma.auditLog.count({ where: { action: 'APPROVAL_DENIED', userId: p.id, createdAt: { gte: new Date(Date.now() - LOCK_MINUTES * 60_000) } } });
     if (recentFails >= MAX_PIN_FAILS) throw new ForbiddenException(`Too many wrong PINs. Try again in ${LOCK_MINUTES} minutes.`);
@@ -153,7 +158,7 @@ export class ApprovalsService {
     for (const m of managers) {
       if (await bcrypt.compare(dto.pin, m.approvalPinHash!)) { manager = m; break; }
     }
-    const what = `${ACTION_LABEL[dto.action]}${dto.action === 'DISCOUNT' ? ` ${dto.percent}%` : ''}`;
+    const what = `${ACTION_LABEL[dto.action]}${dto.action === 'DISCOUNT' ? ` ${dto.percent}%` : dto.action === 'CASH_OUT' ? ` ${dto.amount}` : ''}`;
     if (!manager) {
       await this.audit.record(this.prisma, p, { action: 'APPROVAL_DENIED', storeId: dto.storeId, summary: `Wrong manager PIN for ${what}`, entityType: dto.saleId ? 'sale' : undefined, entityId: dto.saleId, details: { action: dto.action, percent: dto.percent } });
       const left = MAX_PIN_FAILS - recentFails - 1;
@@ -162,7 +167,7 @@ export class ApprovalsService {
     if (manager.id === p.id && p.role === Role.CASHIER) throw new ForbiddenException('You cannot approve your own request');
     const approval = await this.prisma.approval.create({
       data: {
-        storeId: dto.storeId, action: dto.action, maxPercent: dto.percent, saleId: dto.saleId, reason: dto.reason,
+        storeId: dto.storeId, action: dto.action, maxPercent: dto.percent, maxAmount: dto.amount, saleId: dto.saleId, reason: dto.reason,
         managerId: manager.id, requestedById: p.id, expiresAt: new Date(Date.now() + APPROVAL_MINUTES * 60_000),
       },
     });
@@ -178,12 +183,13 @@ export class ApprovalsService {
    * Use an approval once, inside the caller's transaction. Returns the approving manager.
    * Throws when it is missing, for another action / store / sale / user, expired or used.
    */
-  async consume(tx: Prisma.TransactionClient, p: Principal, approvalId: string | undefined, need: { storeId: string; action: ApprovalAction; percent?: number; saleId?: string; usedFor: string }) {
+  async consume(tx: Prisma.TransactionClient, p: Principal, approvalId: string | undefined, need: { storeId: string; action: ApprovalAction; percent?: number; amount?: number; saleId?: string; usedFor: string }) {
     const label = ACTION_LABEL[need.action];
     if (!approvalId) throw new ForbiddenException(`A manager PIN is needed for this ${label}`);
     const a = await tx.approval.findUnique({ where: { id: approvalId } });
     const bad = !a || a.action !== need.action || a.storeId !== need.storeId || a.requestedById !== p.id
-      || (need.saleId && a.saleId !== need.saleId) || (need.percent !== undefined && a.maxPercent !== null && a.maxPercent.lt(need.percent - 0.005));
+      || (need.saleId && a.saleId !== need.saleId) || (need.percent !== undefined && a.maxPercent !== null && a.maxPercent.lt(need.percent - 0.005))
+      || (need.amount !== undefined && (a.maxAmount === null || a.maxAmount.lt(need.amount - 0.005)));
     if (bad) throw new ForbiddenException(`The manager approval does not cover this ${label}; ask again`);
     if (a.expiresAt < new Date()) throw new ForbiddenException('The manager approval has expired; ask again');
     const used = await tx.approval.updateMany({ where: { id: a.id, usedAt: null }, data: { usedAt: new Date(), usedFor: need.usedFor } });

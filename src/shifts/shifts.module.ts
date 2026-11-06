@@ -113,8 +113,9 @@ export class ShiftsService {
   }
 
   /** Totals for the cash-drawer report. */
-  private async summarize(shift: { id: string; storeId: string; userId: string; openingCash: Prisma.Decimal; openingKhr: number; openedAt: Date; closedAt: Date | null }) {
-    const [sales, payments, cashRefunds, topups, voucherSales, khrCash] = await Promise.all([
+  /** Totals and expected drawer of a shift (also used by the X report). */
+  async summarize(shift: { id: string; storeId: string; userId: string; openingCash: Prisma.Decimal; openingKhr: number; openedAt: Date; closedAt: Date | null }) {
+    const [sales, payments, cashRefunds, topups, voucherSales, khrCash, moves] = await Promise.all([
       this.prisma.sale.aggregate({
         where: { shiftId: shift.id },
         _count: true,
@@ -133,7 +134,12 @@ export class ShiftsService {
       this.prisma.walletTransaction.groupBy({ by: ['method'], where: { shiftId: shift.id, type: 'TOPUP' }, _sum: { amount: true }, _count: true }),
       this.prisma.voucher.groupBy({ by: ['soldMethod'], where: { soldShiftId: shift.id }, _sum: { value: true }, _count: true }),
       this.prisma.payment.aggregate({ where: { sale: { shiftId: shift.id }, method: 'CASH', currency: 'KHR' }, _sum: { amount: true, tendered: true }, _count: true }),
+      this.prisma.cashMovement.groupBy({ by: ['type', 'currency'], where: { shiftId: shift.id }, _sum: { amount: true } }),
     ]);
+    // Cash put in / taken out of the drawer during the shift (floats, paid-outs, bank drops)
+    const mv = (type: 'PAY_IN' | 'PAY_OUT', cur: string) => moves.find((m) => m.type === type && m.currency === cur)?._sum.amount ?? D(0);
+    const usdIn = mv('PAY_IN', 'USD'), usdOut = mv('PAY_OUT', 'USD');
+    const khrMoveIn = Number(mv('PAY_IN', 'KHR')), khrMoveOut = Number(mv('PAY_OUT', 'KHR'));
     const cashVouchers = voucherSales.find((x) => x.soldMethod === 'CASH')?._sum.value ?? D(0);
     const cashTopups = topups.find((x) => x.method === 'CASH')?._sum.amount ?? D(0);
     const byMethod = Object.fromEntries(payments.map((x) => [x.method, x._sum.amount ?? D(0)]));
@@ -153,8 +159,12 @@ export class ShiftsService {
       cashRefunds: refunds,
       walletTopups: Object.fromEntries(topups.map((x) => [x.method ?? 'OTHER', x._sum.amount ?? D(0)])),
       voucherSales: Object.fromEntries(voucherSales.map((x) => [x.soldMethod ?? 'OTHER', x._sum.value ?? D(0)])),
-      expectedCash: shift.openingCash.plus(cashIn).minus(change).minus(refunds).plus(cashTopups).plus(cashVouchers),
-      khr: { opening: shift.openingKhr, received: khrIn, change: khrChange, payments: khrCash._count, expected: shift.openingKhr + khrIn - khrChange },
+      /** Dollar drawer parts: cash sales in dollars and dollar change given */
+      cashUsdSales: cashIn, changeUsd: change,
+      cashIn: { usd: usdIn, khr: khrMoveIn },
+      cashOut: { usd: usdOut, khr: khrMoveOut },
+      expectedCash: shift.openingCash.plus(cashIn).minus(change).minus(refunds).plus(cashTopups).plus(cashVouchers).plus(usdIn).minus(usdOut),
+      khr: { opening: shift.openingKhr, received: khrIn, change: khrChange, payments: khrCash._count, payIn: khrMoveIn, payOut: khrMoveOut, expected: shift.openingKhr + khrIn - khrChange + khrMoveIn - khrMoveOut },
     };
   }
 
@@ -199,5 +209,5 @@ export class ShiftsController {
   }
 }
 
-@Module({ controllers: [ShiftsController], providers: [ShiftsService] })
+@Module({ controllers: [ShiftsController], providers: [ShiftsService], exports: [ShiftsService] })
 export class ShiftsModule {}

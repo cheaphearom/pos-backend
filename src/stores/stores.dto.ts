@@ -63,6 +63,10 @@ export class CreateStoreDto {
   @IsOptional() @IsBoolean()
   voidNeedsApproval?: boolean;
 
+  /** Cashiers need a manager PIN to take cash out of the drawer */
+  @IsOptional() @IsBoolean()
+  cashOutNeedsApproval?: boolean;
+
   /** Riel per 1 USD for cash in riel (e.g. 4100); null turns riel cash off */
   @IsOptional() @ValidateIf((_, v) => v !== null) @Type(() => Number) @IsInt() @Min(1000) @Max(10000)
   khrRate?: number | null;

@@ -107,6 +107,10 @@ model Store {
 
   /// Dual currency: riel per 1 USD (e.g. 4100). Empty = riel cash is off for this store.
   khrRate Int? @map("khr_rate")
+  /// Cashiers need a manager PIN to take money out of the drawer (pay-out)
+  cashOutNeedsApproval Boolean @default(true) @map("cash_out_needs_approval")
+  /// Last Z report number of this store
+  zSeq    Int  @default(0) @map("z_seq")
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
 
@@ -383,6 +387,7 @@ model Shift {
   store Store  @relation(fields: [storeId], references: [id])
   user  User   @relation(fields: [userId], references: [id])
   sales Sale[]
+  cashMovements CashMovement[]
 
   @@index([storeId, openedAt])
   @@index([userId, status])
@@ -1190,6 +1195,7 @@ enum ApprovalAction {
   DISCOUNT
   REFUND
   VOID
+  CASH_OUT
 }
 
 /// A manager typed their PIN on a cashier's POS. Used once, within a few minutes, for one action.
@@ -1199,6 +1205,8 @@ model Approval {
   action        ApprovalAction
   /// DISCOUNT: highest discount % allowed by this approval
   maxPercent    Decimal?       @map("max_percent") @db.Decimal(5, 2)
+  /// CASH_OUT: most money (USD value) allowed out of the drawer
+  maxAmount     Decimal?       @map("max_amount") @db.Decimal(14, 2)
   /// REFUND / VOID: the sale it is for
   saleId        String?        @map("sale_id") @db.Uuid
   managerId     String         @map("manager_id") @db.Uuid
@@ -1235,4 +1243,48 @@ model AuditLog {
   @@index([action, createdAt])
   @@index([userId, createdAt])
   @@map("audit_logs")
+}
+
+// ─────────────────────────── Drawer: cash in / out, X and Z reports ───────────────────────────
+
+enum CashMoveType {
+  PAY_IN // money put into the drawer (float, change from the bank)
+  PAY_OUT // money taken out (supplier paid in cash, bank drop, petty cash)
+}
+
+model CashMovement {
+  id           String       @id @default(uuid()) @db.Uuid
+  shiftId      String       @map("shift_id") @db.Uuid
+  storeId      String       @map("store_id") @db.Uuid
+  userId       String       @map("user_id") @db.Uuid
+  type         CashMoveType
+  /// USD or KHR (riel are whole numbers)
+  currency     String       @default("USD") @db.VarChar(3)
+  amount       Decimal      @db.Decimal(14, 2)
+  reason       String       @db.VarChar(200)
+  approvedById String?      @map("approved_by_id") @db.Uuid
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  shift Shift @relation(fields: [shiftId], references: [id])
+
+  @@index([shiftId])
+  @@index([storeId, createdAt])
+  @@map("cash_movements")
+}
+
+/// End of day for a store. The figures are saved when it is run and never change; reprints show the same numbers.
+model ZReport {
+  id          String   @id @default(uuid()) @db.Uuid
+  storeId     String   @map("store_id") @db.Uuid
+  zNo         Int      @map("z_no")
+  businessDay DateTime @map("business_day") @db.Date
+  fromAt      DateTime @map("from_at")
+  toAt        DateTime @map("to_at")
+  data        Json
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([storeId, businessDay])
+  @@unique([storeId, zNo])
+  @@map("z_reports")
 }

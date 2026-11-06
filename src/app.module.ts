@@ -29,6 +29,7 @@ import { AuditModule } from './audit/audit.module';
 import { MemberModule } from './member/member.module';
 import { OnlineModule } from './online/online.module';
 import { ProductionModule } from './production/production.module';
+import { RegistersModule } from './registers/registers.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 import { ShiftsModule } from './shifts/shifts.module';
@@ -68,6 +69,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     OnlineModule,
     MemberModule,
     ProductionModule,
+    RegistersModule,
   ],
   controllers: [HealthController],
   providers: [

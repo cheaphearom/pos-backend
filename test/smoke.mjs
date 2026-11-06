@@ -582,10 +582,6 @@ ok(has('STORE_CHANGED'), 'audit: store setting change');
 const allAudit = (await call('GET', '/audit?limit=200', { token: admin })).j.data;
 ok(allAudit.some((x) => x.action === 'LOGIN_FAILED') && allAudit.some((x) => x.action === 'PRODUCT_CHANGED' && x.summary.includes('sellPrice 0.35 → 0.4')), 'audit: failed login, price change');
 ok((await call('GET', '/audit', { token: cashier })).s === 403, 'cashiers cannot read the audit log');
-// Lockout after 5 wrong PINs in 15 minutes (this test already had 2)
-for (let i = 0; i < 3; i++) await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'DISCOUNT', percent: 50, pin: '0000' } });
-const locked = await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'DISCOUNT', percent: 50, pin: '2580' } });
-ok(locked.s === 403 && /Too many wrong PINs/.test(locked.j.message), 'after 5 wrong PINs even the right one waits: ' + locked.j.message);
 }
 
 // ── USD / KHR dual currency (PP01: 4100 riel = $1). 10 waters = $3.85
@@ -627,6 +623,68 @@ ok(locked.s === 403 && /Too many wrong PINs/.test(locked.j.message), 'after 5 wr
   ok(Number(closedS.difference) === 0 && closedS.differenceKhr === -100 && closedS.expectedKhr === 44100, 'close: dollars balance, riel 100 short');
   const rec = (await call('GET', `/sales/${d.j.receiptNo}`, { token: cashier })).j;
   ok(rec.store.khrRate === 4100, 'receipt carries the store rate');
+}
+
+// ── Drawer cash in / out, X report, Z report (PP01)
+{
+  const cur = (await call('GET', `/shifts/current?storeId=${pp01.id}`, { token: cashier })).j;
+  if (cur?.id) {
+    const sum = (await call('GET', `/shifts/${cur.id}`, { token: cashier })).j.summary;
+    await call('POST', `/shifts/${cur.id}/close`, { token: cashier, body: { closingCash: Number(sum.expectedCash), closingKhr: sum.khr.expected } });
+  }
+  const sh = (await call('POST', '/shifts/open', { token: cashier, body: { storeId: pp01.id, openingCash: 100 } })).j;
+  const sale = await call('POST', '/sales', { token: cashier, body: { storeId: pp01.id, items: [{ productId: water.id, quantity: 10 }], payments: [{ method: 'CASH', amount: 10 }], changeIn: 'USD' } });
+  ok(sale.s === 201 && sale.j.changeUsd === '6.15', 'sale $3.85 paid $10, change $6.15');
+  const cin = await call('POST', `/shifts/${sh.id}/cash`, { token: cashier, body: { type: 'PAY_IN', amount: 20, reason: 'Extra float' } });
+  ok(cin.s === 201 && cin.j.type === 'PAY_IN', 'cash in $20 (float)');
+  ok((await call('POST', `/shifts/${sh.id}/cash`, { token: cashier, body: { type: 'PAY_OUT', amount: 15, reason: 'Ice delivery' } })).s === 403, 'cashier cash out without a manager PIN -> 403');
+  const ap10 = (await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'CASH_OUT', amount: 10, pin: '2580' } })).j;
+  ok((await call('POST', `/shifts/${sh.id}/cash`, { token: cashier, body: { type: 'PAY_OUT', amount: 15, reason: 'Ice delivery', approvalId: ap10.approvalId } })).s === 403, 'a $10 approval does not cover $15');
+  const ap15 = (await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'CASH_OUT', amount: 15, pin: '2580', reason: 'Ice delivery' } })).j;
+  const cout = await call('POST', `/shifts/${sh.id}/cash`, { token: cashier, body: { type: 'PAY_OUT', amount: 15, reason: 'Ice delivery', approvalId: ap15.approvalId } });
+  ok(cout.s === 201 && cout.j.approvedById, 'cash out $15 with the manager PIN');
+  ok(/drawer should only have/.test((await call('POST', `/shifts/${sh.id}/cash`, { token: mgr, body: { type: 'PAY_OUT', amount: 1000, reason: 'Too much' } })).j.message), 'cannot take out more than the drawer holds');
+  ok((await call('POST', `/shifts/${sh.id}/cash`, { token: cashier, body: { type: 'PAY_IN', currency: 'KHR', amount: 10050, reason: 'Riel float' } })).s === 400, 'riel in steps of 100');
+  ok((await call('POST', `/shifts/${sh.id}/cash`, { token: cashier, body: { type: 'PAY_IN', currency: 'KHR', amount: 10000, reason: 'Riel float' } })).s === 201, 'cash in 10,000 riel');
+  const x = (await call('GET', `/shifts/${sh.id}/x-report`, { token: cashier })).j;
+  // 100 + 10 - 6.15 + 20 - 15 = 108.85
+  ok(x.kind === 'X' && x.drawer.expected === 108.85 && x.drawer.khr.expected === 10000, `X report: dollar drawer $${x.drawer.expected}, riel ${x.drawer.khr.expected}`);
+  ok(x.sales.count === 1 && x.sales.net === 3.85 && x.payments[0].method === 'CASH' && x.cash.movements.length === 3, 'X report: 1 sale $3.85, cash payments, 3 cash moves');
+  ok(x.cash.payOutUsd === 15 && x.cash.movements.find((m) => m.type === 'PAY_OUT').approvedBy.includes('Sokha'), 'X report shows the cash out and who approved it');
+  ok(Number((await call('GET', `/shifts/${sh.id}`, { token: cashier })).j.summary.expectedCash) === 108.85, 'shift summary includes cash in / out');
+  ok((await call('GET', `/shifts/${sh.id}/x-report`, { token: await login('cashier2@pos.local') })).s === 403, 'another store\'s cashier cannot read this X report');
+  // Z report
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Phnom_Penh' }).format(new Date());
+  const pv = (await call('GET', `/z-reports/preview?storeId=${pp01.id}&date=${day}`, { token: mgr })).j;
+  ok(pv.openShifts.length >= 1 && pv.alreadyClosed === null, 'Z preview: open shifts listed');
+  ok(/Close these shifts first/.test((await call('POST', '/z-reports', { token: mgr, body: { storeId: pp01.id, date: day } })).j.message), 'Z refused while a shift is open');
+  for (const o of (await call('GET', `/shifts?storeId=${pp01.id}&status=OPEN&limit=100`, { token: mgr })).j.data) {
+    const sum = (await call('GET', `/shifts/${o.id}`, { token: mgr })).j.summary;
+    await call('POST', `/shifts/${o.id}/close`, { token: mgr, body: { closingCash: o.id === sh.id ? 108 : Number(sum.expectedCash), closingKhr: sum.khr.expected } });
+  }
+  ok((await call('POST', '/z-reports', { token: cashier, body: { storeId: pp01.id, date: day } })).s === 403, 'cashiers cannot run the Z report');
+  ok((await call('POST', '/z-reports', { token: mgr, body: { storeId: pp01.id, date: '2099-01-01' } })).s === 400, 'Z for a future day refused');
+  const z = await call('POST', '/z-reports', { token: mgr, body: { storeId: pp01.id, date: day } });
+  const mine = z.j.shifts?.find((s) => s.expected === 108.85);
+  ok(z.s === 201 && z.j.zNo === 1 && z.j.kind === 'Z' && z.j.sales.count > 0, `Z report Z0001: ${z.j.sales?.count} sales, net ${z.j.netAfterRefunds}`);
+  ok(mine && mine.difference === -0.85 && mine.counted === 108, 'Z lists each shift: this one 0.85 short');
+  ok(z.j.cashiers.length >= 1 && z.j.payments.length >= 1 && z.j.refunds && z.j.voids, 'Z has payments, refunds, voids and cashiers');
+  ok(/already run/.test((await call('POST', '/z-reports', { token: mgr, body: { storeId: pp01.id, date: day } })).j.message), 'one Z per store and day');
+  const zl = (await call('GET', `/z-reports?storeId=${pp01.id}`, { token: mgr })).j;
+  ok(zl.data.length === 1 && zl.data[0].zNo === 1, 'Z list shows Z0001');
+  const zg = (await call('GET', `/z-reports/${z.j.id}`, { token: mgr })).j;
+  ok(zg.netAfterRefunds === z.j.netAfterRefunds && zg.zNo === 1, 'reprint shows the saved figures');
+  ok((await call('GET', `/z-reports/preview?storeId=${pp01.id}&date=${day}`, { token: mgr })).j.alreadyClosed?.zNo === 1, 'preview says the day is closed');
+  const aud = (await call('GET', `/audit?storeId=${pp01.id}&limit=200`, { token: mgr })).j.data;
+  ok(aud.some((a) => a.action === 'CASH_OUT' && a.approvedByName) && aud.some((a) => a.action === 'Z_REPORT'), 'audit: cash out and Z report');
+}
+
+// (runs last: it locks the cashier's PIN requests for 15 minutes)
+{
+// Lockout after 5 wrong PINs in 15 minutes (this test already had 2)
+for (let i = 0; i < 3; i++) await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'DISCOUNT', percent: 50, pin: '0000' } });
+const locked = await call('POST', '/approvals', { token: cashier, body: { storeId: pp01.id, action: 'DISCOUNT', percent: 50, pin: '2580' } });
+ok(locked.s === 403 && /Too many wrong PINs/.test(locked.j.message), 'after 5 wrong PINs even the right one waits: ' + locked.j.message);
 }
 
 await new Promise((r) => setTimeout(r, 2500));
