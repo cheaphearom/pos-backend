@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
@@ -12,7 +13,10 @@ import { config } from './config';
 };
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // Behind Cloudflare + nginx: take the customer's real IP from X-Forwarded-For (rate limits, audit log).
+  // TRUST_PROXY = number of proxies in front of the API (2 = Cloudflare Tunnel + nginx).
+  if (process.env.TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });
   app.use(helmet());
   app.enableCors({ origin: config.corsOrigins.includes('*') ? true : config.corsOrigins });
