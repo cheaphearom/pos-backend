@@ -10,7 +10,7 @@ import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 import { ClientThrottlerGuard } from './common/throttler.guard';
 import { config } from './config';
 import { CustomersModule } from './customers/customers.module';
-import { HealthController } from './health.controller';
+import { ApiRootController, HealthController } from './health.controller';
 import { ApiKeysModule } from './integrations/api-keys.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -71,7 +71,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ProductionModule,
     RegistersModule,
   ],
-  controllers: [HealthController],
+  controllers: [HealthController, ApiRootController],
   providers: [
     { provide: APP_GUARD, useClass: ClientThrottlerGuard },
     { provide: APP_GUARD, useClass: AuthGuard },

@@ -16,3 +16,14 @@ export class HealthController {
     return { status: 'ok', time: new Date().toISOString() };
   }
 }
+
+/** GET /api/v1 — shows that the API is reachable and where the documentation is. */
+@ApiTags('Health')
+@Controller()
+export class ApiRootController {
+  @Public()
+  @Get()
+  root() {
+    return { name: 'POS System API', status: 'ok', version: 'v1', docs: '/docs', health: '/health' };
+  }
+}
