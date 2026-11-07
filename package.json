@@ -1,11 +1,13 @@
 {
-  "name": "@pos/api",
+  "name": "pos-backend",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "build": "nest build",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
+    "dev": "nest start --watch",
+    "dev": "nest start --watch",
     "test": "jest",
     "test:smoke": "node test/smoke.mjs",
     "postinstall": "prisma generate",
@@ -55,5 +57,8 @@
     "testRegex": ".*\\.spec\\.ts$",
     "transform": { "^.+\\.ts$": "ts-jest" },
     "testEnvironment": "node"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

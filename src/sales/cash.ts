@@ -1,3 +1,8 @@
+/*
+ * SHARED WITH THE FRONTEND: pos-frontend keeps an identical copy in src/shared/cash.ts.
+ * Change both files together (pos-frontend: `npm run check:shared`), otherwise offline till totals
+ * will not match the server.
+ */
 /**
  * Dual currency cash (USD prices, cash in dollars and/or riel). Pure functions shared by the API and the POS,
  * so the till and the server always agree. Riel has no coins: amounts are rounded to 100 riel.

@@ -1,3 +1,8 @@
+/*
+ * SHARED WITH THE FRONTEND: pos-frontend keeps an identical copy in src/shared/promotions.ts.
+ * Change both files together (pos-frontend: `npm run check:shared`), otherwise offline till totals
+ * will not match the server.
+ */
 /**
  * Promotion engine. PURE TypeScript with no imports, because the same file is used by
  * the API (to price sales) and by the POS in the browser (to price sales offline).
