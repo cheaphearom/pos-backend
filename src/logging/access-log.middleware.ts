@@ -5,8 +5,8 @@ import { logContext, writeLog } from './logger';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SAFE_REQUEST_ID = /^[\w.:-]{8,128}$/;
 
-/** Paths that are not access-logged: health checks and the monitoring page's own polling. */
-export const SKIP_ACCESS_LOG = [/^\/health(\/|$)/, /^\/api\/v1\/monitoring(\/|$)/];
+/** Paths that are not access-logged: health checks, the monitoring page's own polling, fault injection. */
+export const SKIP_ACCESS_LOG = [/^\/health(\/|$)/, /^\/api\/v1\/monitoring(\/|$)/, /^\/api\/v1\/chaos(\/|$)/];
 
 /**
  * Replaces ids in a path with {id}: UUIDs, numbers, receipt numbers (S-PP01-…), barcodes,

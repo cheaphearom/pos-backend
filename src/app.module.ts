@@ -7,7 +7,8 @@ import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
 import { AuthGuard } from './common/auth.guard';
 import { ClientThrottlerGuard } from './common/throttler.guard';
-import { config } from './config';
+import { chaosConfig, config } from './config';
+import { ChaosModule } from './chaos/chaos.module';
 import { AllExceptionsFilter } from './logging/all-exceptions.filter';
 import { CustomersModule } from './customers/customers.module';
 import { ApiRootController, HealthController } from './health.controller';
@@ -72,6 +73,8 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ProductionModule,
     RegistersModule,
     MonitoringModule,
+    // Fault injection: only loaded when CHAOS_ENABLED=true (refused in production, see config.ts)
+    ...(chaosConfig.enabled ? [ChaosModule] : []),
   ],
   controllers: [HealthController, ApiRootController],
   providers: [

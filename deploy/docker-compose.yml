@@ -40,6 +40,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      # Fault injection is for testing only: always off here (the API also refuses it in production)
+      CHAOS_ENABLED: "false"
       DATABASE_URL: postgresql://${POSTGRES_USER:-pos}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pos}?schema=public
       REDIS_URL: redis://redis:6379
       TRUST_PROXY: ${TRUST_PROXY:-1}
