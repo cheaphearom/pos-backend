@@ -1,0 +1,38 @@
+// Grafana Alloy: ships the POS API's JSON log files to Loki (the ml-detector stack).
+// Labels stay few (Loki indexes labels): job, service, level. Everything else (event, path, status,
+// storeId, traceId…) stays inside the JSON line and is read with `| json` in queries.
+
+local.file_match "pos" {
+  // the active files only: rolled files (*.log.gz) were already shipped while they were active
+  path_targets = [{"__path__" = "/logs/*.log", "job" = "pos"}]
+}
+
+loki.source.file "pos" {
+  targets    = local.file_match.pos.targets
+  forward_to = [loki.process.pos.receiver]
+}
+
+loki.process "pos" {
+  stage.json {
+    expressions = {service = "service", level = "level", ts = "\"@timestamp\""}
+  }
+  stage.labels {
+    values = {service = "", level = ""}
+  }
+  // the line's own time, not the time Alloy read it
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339Nano"
+  }
+  stage.label_drop {
+    values = ["filename"]
+  }
+  forward_to = [loki.write.loki.receiver]
+}
+
+loki.write "loki" {
+  endpoint {
+    // same server: http://loki:3100/loki/api/v1/push over the pos-monitoring network
+    url = coalesce(sys.env("LOKI_PUSH_URL"), "http://loki:3100/loki/api/v1/push")
+  }
+}

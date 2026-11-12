@@ -1,9 +1,10 @@
-# Production: database, cache, API, Cloudflare Tunnel, nightly backups and the ML anomaly detector.
+# Production: database, cache, API, Cloudflare Tunnel and nightly backups.
 # The web app is hosted separately (pos-frontend on Cloudflare Workers) and calls this API.
 #   cd deploy && cp .env.example .env   (fill it in)
 #   docker compose up -d --build
 # Nothing is opened to the internet: Cloudflare Tunnel connects out to Cloudflare.
-# The ML detector is turned on with COMPOSE_PROFILES=tunnel,monitoring (deploy/.env).
+# Logs to Loki and the ML detector (github.com/cheaphearom/ml-detector): docker-compose.monitoring.yml,
+# turned on with COMPOSE_FILE in deploy/.env (see deploy/README.md).
 name: pos
 
 services:
@@ -45,9 +46,9 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-pos}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pos}?schema=public
       REDIS_URL: redis://redis:6379
       TRUST_PROXY: ${TRUST_PROXY:-1}
-      # JSON logs for the ML detector: deploy/logs on the server (rotated daily / at LOG_MAX_MB)
+      # JSON logs: deploy/logs on the server (rotated daily / at LOG_MAX_MB); Alloy ships them to Loki
       LOG_DIR: /app/logs
-      # The monitoring endpoints reach the detector over the internal network only
+      # The monitoring endpoints reach the detector over the pos-monitoring network only
       DETECTOR_URL: http://ml-detector:8000
       DETECTOR_API_KEY: ${DETECTOR_API_KEY:-}
     volumes:
@@ -60,40 +61,6 @@ services:
     # Only reachable from this computer (for checking); the public way in is the tunnel.
     ports:
       - "127.0.0.1:${API_PORT:-3000}:3000"
-
-  # ML anomaly detector: reads the API's logs (read-only), keeps its models in deploy/models.
-  # No port is published: only the API reaches it (http://ml-detector:8000), never the internet.
-  ml-detector:
-    build:
-      context: ../monitoring/ml-detector
-    restart: unless-stopped
-    profiles: ["monitoring"]
-    environment:
-      DETECTOR_PROFILE: pos
-      LOG_DIR: /logs
-      MODEL_DIR: /models
-      LIVE_INTERVAL: "10"
-      DETECTOR_API_KEY: ${DETECTOR_API_KEY:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      NOTIFY_METHODS: ${NOTIFY_METHODS:-}
-      NOTIFY_RESOLVE_AFTER_S: ${NOTIFY_RESOLVE_AFTER_S:-60}
-      NOTIFY_MIN_WINDOWS: ${NOTIFY_MIN_WINDOWS:-}
-      # times in the Telegram messages: the business time zone (TZ in deploy/.env)
-      NOTIFY_TIMEZONE: ${NOTIFY_TIMEZONE:-${TZ:-UTC}}
-      TZ: UTC
-    volumes:
-      - ./logs:/logs:ro
-      - ./models:/models
-    # Training one day of logs needs about 600 MB on top of the live loop (~200 MB).
-    mem_limit: 1536m
-    cpus: 1.0
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
-      interval: 30s
-      timeout: 5s
-      start_period: 30s
-      retries: 3
 
   cloudflared:
     image: cloudflare/cloudflared:latest

@@ -1,0 +1,27 @@
+# Monitoring add-on: ships the API's logs to Loki and lets the API reach the ML detector.
+# Needs the ml-detector stack (github.com/cheaphearom/ml-detector) running first: it creates the
+# Docker network "pos-monitoring". Turn on in deploy/.env:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.monitoring.yml
+services:
+  api:
+    networks: [default, pos-monitoring]
+
+  alloy:
+    image: grafana/alloy:v1.10.0
+    restart: unless-stopped
+    command: ["run", "--server.http.listen-addr=127.0.0.1:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    environment:
+      LOKI_PUSH_URL: ${LOKI_PUSH_URL:-}
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ./logs:/logs:ro
+      - alloy-data:/var/lib/alloy/data   # read positions: no line is sent twice after a restart
+    networks: [pos-monitoring]
+    mem_limit: 256m
+
+networks:
+  pos-monitoring:
+    external: true
+
+volumes:
+  alloy-data:

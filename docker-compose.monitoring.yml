@@ -1,0 +1,20 @@
+# Development: ship ./logs (written by `npm run dev`) to Loki of the ml-detector stack.
+# Start the ml-detector stack first (it creates the network "pos-monitoring"), then:
+#   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+services:
+  alloy:
+    image: grafana/alloy:v1.10.0
+    restart: unless-stopped
+    command: ["run", "--server.http.listen-addr=127.0.0.1:12345", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ./logs:/logs:ro
+      - alloy-data:/var/lib/alloy/data
+    networks: [pos-monitoring]
+
+networks:
+  pos-monitoring:
+    external: true
+
+volumes:
+  alloy-data:
