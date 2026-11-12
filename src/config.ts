@@ -61,3 +61,12 @@ export const khqrConfig = {
   token: process.env.BAKONG_TOKEN ?? '',
   expiryMinutes: Number(process.env.KHQR_EXPIRY_MINUTES ?? 5),
 };
+
+/**
+ * ML anomaly detector (monitoring/ml-detector). Production: http://ml-detector:8000 on the internal
+ * Docker network (never published). Empty = monitoring shows the detector as not set up.
+ */
+export const detectorConfig = {
+  url: (process.env.DETECTOR_URL ?? 'http://localhost:8000').trim().replace(/\/+$/, ''),
+  apiKey: (process.env.DETECTOR_API_KEY ?? '').trim(),
+};

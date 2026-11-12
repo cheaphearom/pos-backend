@@ -22,6 +22,7 @@ import { WalletModule } from './wallet/wallet.module';
 import { CouponsModule } from './coupons/coupons.module';
 import { VouchersModule } from './vouchers/vouchers.module';
 import { LookupModule } from './lookup.controller';
+import { MonitoringModule } from './monitoring/monitoring.module';
 import { ModifiersModule } from './modifiers/modifiers.module';
 import { KitchenModule } from './kitchen/kitchen.module';
 import { RecipesModule } from './recipes/recipes.module';
@@ -70,6 +71,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     MemberModule,
     ProductionModule,
     RegistersModule,
+    MonitoringModule,
   ],
   controllers: [HealthController, ApiRootController],
   providers: [
