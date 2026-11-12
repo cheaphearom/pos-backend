@@ -10,7 +10,7 @@ alerts.
 | API | Node.js 22, **NestJS 11**, TypeScript |
 | Database | **PostgreSQL 16** with Prisma ORM |
 | Background jobs and cache | **Redis 7** with BullMQ (webhook delivery) |
-| Logs and monitoring | JSON logs (pino), ML anomaly detector (Python, FastAPI, scikit-learn), Telegram alerts |
+| Logs and monitoring | JSON logs (pino), Grafana Alloy → Loki, ML anomaly detector ([ml-detector](https://github.com/cheaphearom/ml-detector)), Telegram alerts |
 | Deployment | Docker, Cloudflare Tunnel (`deploy/`) |
 
 The web app is the separate **pos-frontend** project (Vue 3, hosted on Cloudflare Workers). The full feature guide
@@ -23,11 +23,11 @@ pos-backend/
 │                      customers, wallet, coupons, vouchers, promotions, payments (KHQR), kitchen, recipes,
 │                      production, online, member, audit, registers (X/Z), integrations, webhooks, common,
 │                      logging (JSON logs), monitoring (status, metrics), chaos (test faults, development only)
-├── monitoring/        ml-detector: the log anomaly detector (Python); TESTING.md: the 15-minute alert test
+├── monitoring/        TESTING.md: the 15-minute alert test (the detector: github.com/cheaphearom/ml-detector)
 ├── scripts/           load.mjs (till traffic), chaos.mjs (switch a test fault on / off)
 ├── test/smoke.mjs     end-to-end test of the whole API
-├── deploy/            production: Docker stack, Cloudflare Tunnel, nightly backups (see deploy/README.md)
-└── docker-compose.yml PostgreSQL + Redis (+ the detector with --profile monitoring) for development
+├── deploy/            production: Docker stack, Cloudflare Tunnel, nightly backups, Alloy (see deploy/README.md)
+└── docker-compose.yml PostgreSQL + Redis for development (docker-compose.monitoring.yml: Alloy → Loki)
 ```
 
 ## Deploy to production
@@ -117,11 +117,7 @@ monitoring, fault injection). `npm run test:smoke` is the end-to-end test of the
 needs the API running on fresh demo data (`npm run db:reset`). The browser tests are in pos-frontend
 (`npm run test:monitor` there checks the System monitor page).
 
-The anomaly detector has its own tests (Python 3.12+):
-
-```bash
-cd monitoring/ml-detector && pip install -r requirements-dev.txt && pytest
-```
+The anomaly detector's tests are in the ml-detector repository.
 
 ## Rules shared with the frontend
 
@@ -240,20 +236,23 @@ Delivery history and retries: `GET /webhooks/:id/deliveries` and `POST /webhooks
 
 ## Monitoring and anomaly detection
 
-The API writes structured JSON logs; a small ML service reads them, scores every 10 seconds whether the last
-30 seconds look normal, explains what is wrong and sends an alert to Telegram. Super admins see everything on the
-**System monitor** page of the web app. The detector comes from the thesis project
-[cheaphearom/e-commerce](https://github.com/cheaphearom/e-commerce) (`monitoring/ml-detector/ORIGIN.md`).
+The API writes structured JSON logs. **Grafana Alloy** ships them to **Loki**; the **ML anomaly detector** reads
+them from Loki, scores every 10 seconds whether the last 30 seconds look normal, explains what is wrong and sends an
+alert to Telegram. Loki, Grafana and the detector are their own project:
+**[cheaphearom/ml-detector](https://github.com/cheaphearom/ml-detector)** (same server or another one). Super admins
+see the status, metrics, anomaly scores and alerts on the **System monitor** page of the web app; Grafana is for
+searching the logs.
 
 ```
- tills / admin ──► pos-api ──writes──► logs/pos-api.log  (JSON lines, rotated daily / at 100 MB)
-                   │  ▲                       │ read-only
-                   │  │ /api/v1/monitoring/*  ▼
-                   │  └──────────────── ml-detector :8000 (internal network only)
-                   │                     │ every 10 s: newest 30-s window → rules, Isolation Forest, PCA
-                   │                     │ explanation: service, kind of problem, signals, log lines, store
-                   │                     └──► Telegram: one message when a problem starts, one when resolved
-                   └──► System monitor page (pos-frontend): status, charts, anomaly scores, alerts
+ tills / admin ──► pos-api ──writes──► logs/pos-api.log (JSON lines, rotated daily / at 100 MB)
+                   │  ▲                       │
+                   │  │                 Grafana Alloy (docker-compose.monitoring.yml)
+                   │  │                       ▼
+                   │  │  /api/v1/monitoring/*   ┌──── ml-detector stack (network pos-monitoring) ────┐
+                   │  └──────────────────────── │ ml-detector ◄── Loki ──► Grafana (search, dashboard) │
+                   │                            │      └──► Telegram: one message per incident         │
+                   ▼                            └──────────────────────────────────────────────────────┘
+          System monitor page (pos-frontend)
 ```
 
 ### Logs
@@ -284,23 +283,6 @@ Every line is JSON in the format of the e-commerce services (`@timestamp`, `leve
 written: such fields are dropped, and e-mails, JWTs, keys and long numbers are masked in any text
 (`src/logging/logging.spec.ts` checks this).
 
-### The detector
-
-- **Profile** `DETECTOR_PROFILE=pos`: services `pos-api` and `pos-worker`; per window it counts requests, errors,
-  latency (mean, p95, max), webhook job durations, and the business events `sale_completed`, `sale_failed`,
-  `payment_failed`, `stock_negative`, `cash_mismatch`, `webhook_failed`, `webhook_retries_exhausted`,
-  `login_failed`, `db_query_slow`, plus `sale_success_ratio` and never-seen error messages.
-- **Rules** (work without training; each must hold for 3 windows in a row, i.e. ~30 s): `pos-api` 5xx above 5 %
-  (with at least 10 requests), `pos-api` p95 above 1500 ms, more than 5 ERROR lines in a service, more than 3
-  failed payments, any webhook given up after all retries.
-- **ML** (after training on normal traffic): Isolation Forest and PCA (reconstruction error and Hotelling's T²).
-  The POS has no labelled faults, so the supervised models (Random Forest, Logistic Regression) stay off unless a
-  labels file exists. By default only the **rules and PCA** send alerts (`NOTIFY_METHODS`); Isolation Forest is
-  scored and shown, but in the POS a fault moves only a few features and it misses many of them.
-- **Explanation**: the suspected service, the kind of problem (slow responses, errors, payment failures, webhook
-  delivery failures, slow database, failed sales, many failed logins), the strongest signals against their normal
-  level, real log lines, and the store when most failures come from one store.
-
 ### Monitoring API (super admins)
 
 | Endpoint | |
@@ -312,86 +294,38 @@ written: such fields are dropped, and e-mails, JWTs, keys and long numbers are m
 | `POST /api/v1/monitoring/notify-test` | sends a test message to Telegram |
 | `GET /health` (public) | `database` and `redis`: ok / fail (HTTP 503 when one fails) |
 
-The browser never talks to the detector; the API calls it at `DETECTOR_URL` with `DETECTOR_API_KEY`.
+The browser never talks to the detector; the API calls it at `DETECTOR_URL` with `DETECTOR_API_KEY`. The System
+monitor page of pos-frontend shows all of this.
 
-### Settings
+### Settings (this API)
 
-| Variable | Where | Default | |
-|---|---|---|---|
-| `LOG_DIR` | API | `./logs` (production: `deploy/logs`) | JSON log files |
-| `LOG_LEVEL`, `LOG_MAX_MB`, `LOG_MAX_FILES` | API | `info`, 100, 14 | rotation: daily or at `LOG_MAX_MB`; rolled files are gzipped |
-| `DB_SLOW_QUERY_MS` | API | 500 | `db_query_slow` above this |
-| `CASH_MISMATCH_THRESHOLD` | API | 1 | `cash_mismatch` above this difference |
-| `DETECTOR_URL` | API | `http://localhost:8000` (production: `http://ml-detector:8000`) | |
-| `DETECTOR_API_KEY` | API and detector | empty | shared key (`openssl rand -hex 24`); recommended in production |
-| `DETECTOR_PROFILE` | detector | `pos` in the compose files | `ecommerce` is the thesis system |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | detector | empty = no Telegram | |
-| `NOTIFY_METHODS` | detector | `rules,pca` | detectors that may send alerts |
-| `NOTIFY_RESOLVE_AFTER_S` | detector | 60 | seconds without an alert before "resolved" |
-| `NOTIFY_MIN_WINDOWS` | detector | 4 | an ML detector must alert this many windows in a row (~40 s) before a message, so one stray error does not page anyone |
-| `NOTIFY_TIMEZONE` | detector | production: `TZ` | time zone of the times in the messages |
-| `MIN_TRAIN_HOURS` | detector | 24 | warning when trained on less |
-| `CHAOS_ENABLED` | API | `false` | test faults; development only (refused in production) |
+| Variable | Default | |
+|---|---|---|
+| `LOG_DIR` | `./logs` (production: `deploy/logs`) | JSON log files (Alloy ships them to Loki) |
+| `LOG_LEVEL`, `LOG_MAX_MB`, `LOG_MAX_FILES` | `info`, 100, 14 | rotation: daily or at `LOG_MAX_MB`; rolled files are gzipped |
+| `DB_SLOW_QUERY_MS` | 500 | `db_query_slow` above this |
+| `CASH_MISMATCH_THRESHOLD` | 1 | `cash_mismatch` above this difference |
+| `DETECTOR_URL` | `http://localhost:8000` (production: `http://ml-detector:8000`) | the detector |
+| `DETECTOR_API_KEY` | empty | the same key as in the ml-detector stack (`openssl rand -hex 24`) |
+| `LOKI_PUSH_URL` | `http://loki:3100/loki/api/v1/push` | for Alloy, when Loki is on another server |
+| `CHAOS_ENABLED` | `false` | test faults; development only (refused in production) |
 
-Real values go in `.env` (development) or `deploy/.env` (production), which git ignores. Never commit them.
+Telegram, the detector's thresholds, training and Grafana are set up in the ml-detector project (its README).
 
 ### Run it
 
-Development: `docker compose --profile monitoring up -d --build` starts PostgreSQL, Redis and the detector (its
-dashboard: http://localhost:8000); run the API with `npm run dev`. Production: add `monitoring` to
-`COMPOSE_PROFILES` in `deploy/.env` (see [deploy/README.md](deploy/README.md)); the detector's port is not
-published.
-
-### Training
-
-**Train after at least 1 day of normal traffic**, on a period without incidents (windows where the rules fire are
-left out automatically). Until then only the rules run.
+1. Start the ml-detector stack (its README): it creates the Docker network `pos-monitoring`.
+2. Production: in `deploy/.env` set `COMPOSE_FILE=docker-compose.yml:docker-compose.monitoring.yml` and
+   `DETECTOR_API_KEY`, then `docker compose up -d` (see [deploy/README.md](deploy/README.md)). Development: run the
+   API with `npm run dev` and ship `./logs` with
+   `docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d`.
+3. **Train the detector after at least 1 day of normal traffic** (in the ml-detector folder):
 
 ```bash
 docker compose exec ml-detector python -m detector.cli train --hours 24
 ```
 
-The running detector loads the new models within 10 seconds (kept in `./models`, production `deploy/models`).
-Train on 24–48 hours (about 600 MB of memory for one day). Train again after big changes: a new store, new
-opening hours, a much busier season. The System monitor shows when it was trained and warns when that was on too
-little data.
-
-### Telegram alerts
-
-1. In Telegram, open **@BotFather**, send `/newbot` and follow the steps. Copy the **token**.
-2. Open your new bot and send it any message (e.g. `hi`). For a group: add the bot to the group and send a message there.
-3. Find the **chat id**: open `https://api.telegram.org/bot<TOKEN>/getUpdates` in a browser and copy the number at
-   `"chat":{"id": ...}` (group ids start with `-`).
-4. Put `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `deploy/.env` (or `.env` in development).
-5. Recreate the detector so it reads them, then press **Send test Telegram message** on the System monitor page:
-
-```bash
-docker compose up -d ml-detector
-```
-
-Each incident gives **one message when it starts and one when it is resolved**, never one per window. A message
-is sent when the rules fire (3 windows in a row) or PCA has alerted for 4 windows in a row (about 40 s):
-
-```
-🚨 Anomaly detected in the POS (incident #1)
-Time: 2026-11-12 16:09:30 Asia/Phnom_Penh
-Detected by: PCA (reconstruction) (18.55)
-
-Suspected service: pos-api
-Suspected problem: slow responses
-Strongest signals:
-• pos-api: mean latency (ms) = 114 ms (normal ≈ 13 ms)
-• system: slow database queries = 1 (normal ≈ 0)
-ℹ️ the database is answering slowly
-Example log lines:
-• [pos-api] Slow database query event=db_query_slow model=raw action=SELECT durationMs=3737
-```
-
-If Telegram cannot be reached the detector logs a warning, keeps running and sends the message later (after
-10 s, 30 s, 1, 2, then every 5 minutes, for up to 6 hours). A wrong token or chat id is reported and not retried.
-
-An incident is resolved by new traffic without alerts: the detector follows the time of the log lines, so a
-problem that starts just before closing time is marked resolved when the next requests arrive.
+Without the add-on the POS works exactly as before; the System monitor page then shows the detector as not reachable.
 
 ### Testing the alerts
 

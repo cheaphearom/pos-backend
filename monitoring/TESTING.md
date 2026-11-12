@@ -16,24 +16,30 @@ incident. Login checks still apply, and `/health`, `/api/v1/monitoring/*` and `/
 
 ## Once: settings
 
-In `.env` (the API's development settings, from `.env.example`):
+In `.env` of this project (the API's development settings, from `.env.example`):
 
 ```
 CHAOS_ENABLED=true
 DETECTOR_URL=http://localhost:8000
-TELEGRAM_BOT_TOKEN=<your bot token>
-TELEGRAM_CHAT_ID=<your chat id>
-NOTIFY_TIMEZONE=Asia/Phnom_Penh
+DETECTOR_API_KEY=<a key>
 ```
 
-(How to get the token and chat id: see "Telegram alerts" in the README.)
+In `.env` of the [ml-detector](https://github.com/cheaphearom/ml-detector) project: `GRAFANA_ADMIN_PASSWORD`, the same
+`DETECTOR_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (how to get them: its README) and
+`NOTIFY_TIMEZONE=Asia/Phnom_Penh`.
 
 ## The test
 
-1. Start PostgreSQL, Redis and the detector:
+1. In the ml-detector folder, start Loki, Grafana and the detector, reachable from this computer:
 
 ```bash
-docker compose --profile monitoring up -d --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+   Then here, start PostgreSQL, Redis and Alloy (which ships `./logs` to Loki):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
 ```
 
 2. Fresh demo data (this **deletes** the development database):
@@ -42,7 +48,7 @@ docker compose --profile monitoring up -d --build
 npm run db:reset
 ```
 
-3. Start the API (it writes its JSON logs to `./logs`, which the detector reads):
+3. Start the API (it writes its JSON logs to `./logs`; Alloy sends them to Loki, where the detector reads them):
 
 ```bash
 npm run dev
@@ -58,7 +64,8 @@ npm run dev
 npm run load -- --minutes 15
 ```
 
-6. **Minute 7** – train on the traffic so far. The warning about less than 24 hours is expected in a test:
+6. **Minute 7** – train on the traffic so far, in the ml-detector folder. The warning about less than 24 hours is
+   expected in a test:
 
 ```bash
 docker compose exec ml-detector python -m detector.cli train --hours 1
@@ -87,8 +94,9 @@ npm run chaos -- ERROR --rate 0.3 --duration 90
 ```
 
 10. Afterwards: `npm run chaos -- off` stops a fault early, and `npm run chaos -- status` shows the current one.
-    Set `CHAOS_ENABLED=false` again. The model in `./models` was trained on test traffic only: never copy it to a
-    server (production trains on its own, real traffic).
+    Set `CHAOS_ENABLED=false` again. The model in the ml-detector `./models` folder was trained on test traffic
+    only: never copy it to a server (production trains on its own, real traffic). Grafana (http://localhost:3001,
+    dashboard "POS logs") shows the same incident in the logs.
 
 Other faults: `npm run chaos -- LATENCY --latency 2500 --duration 90`.
 

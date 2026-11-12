@@ -1,7 +1,7 @@
 # Local development: PostgreSQL + Redis (run the API with `npm run dev`).
 #   docker compose up -d
-# With the ML anomaly detector (reads ./logs written by the API, dashboard on http://localhost:8000):
-#   docker compose --profile monitoring up -d --build
+# Logs to Loki for the ML detector (github.com/cheaphearom/ml-detector, start that stack first):
+#   docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
 services:
   postgres:
     image: postgres:16-alpine
@@ -28,31 +28,6 @@ services:
       - "6379:6379"
     volumes:
       - redisdata:/data
-
-  # ML anomaly detector (monitoring/ml-detector). Reads the API's JSON logs from ./logs (read-only),
-  # keeps trained models in ./models. Telegram settings come from .env.
-  ml-detector:
-    build: ./monitoring/ml-detector
-    profiles: ["monitoring"]
-    restart: unless-stopped
-    environment:
-      DETECTOR_PROFILE: pos
-      LOG_DIR: /logs
-      MODEL_DIR: /models
-      LIVE_INTERVAL: "10"
-      DETECTOR_API_KEY: ${DETECTOR_API_KEY:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      NOTIFY_METHODS: ${NOTIFY_METHODS:-}
-      NOTIFY_RESOLVE_AFTER_S: ${NOTIFY_RESOLVE_AFTER_S:-60}
-      NOTIFY_MIN_WINDOWS: ${NOTIFY_MIN_WINDOWS:-}
-      NOTIFY_TIMEZONE: ${NOTIFY_TIMEZONE:-UTC}
-    volumes:
-      - ./logs:/logs:ro
-      - ./models:/models
-    ports:
-      - "127.0.0.1:8000:8000"   # development only; production does not publish it
-    mem_limit: 1536m
 
 volumes:
   pgdata:
