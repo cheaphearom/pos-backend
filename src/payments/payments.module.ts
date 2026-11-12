@@ -8,6 +8,7 @@ import { CurrentPrincipal, Scopes } from '../common/decorators';
 import { assertStoreAccess, Principal, userIdOf } from '../common/principal';
 import { PrismaService } from '../prisma/prisma.service';
 import { generateKhqr, KhqrError } from './khqr';
+import { logEvent } from '../logging/logger';
 
 export class CreateKhqrDto {
   @IsUUID()
@@ -73,6 +74,7 @@ export class KhqrService {
       }
       if (row.status === 'PENDING' && row.expiresAt < new Date()) {
         row = await this.prisma.khqrPayment.update({ where: { id: row.id }, data: { status: 'EXPIRED' } });
+        logEvent('warn', 'payment_failed', 'KHQR expired before payment', { method: 'KHQR', storeId: row.storeId, reason: 'expired', amount: row.amount, currency: row.currency });
       }
     }
     return this.view(row);
@@ -145,12 +147,12 @@ export class KhqrService {
             },
           });
         }
-        this.log.warn(`KHQR ${row.md5}: Bakong reports ${d.amount} ${d.currency}, expected ${row.amount} ${row.currency}`);
+        logEvent('warn', 'payment_failed', 'KHQR amount mismatch', { method: 'KHQR', storeId: row.storeId, reason: 'amount_mismatch', amount: row.amount, paidAmount: Number(d.amount), currency: row.currency });
       } else if (!res.ok) {
-        this.log.warn(`Bakong check failed: HTTP ${res.status} ${body?.responseMessage ?? ''}`);
+        logEvent('warn', 'payment_failed', 'Bakong check failed', { method: 'KHQR', storeId: row.storeId, reason: 'bakong_http_error', status: res.status, errorMessage: String(body?.responseMessage ?? '') });
       }
     } catch (e) {
-      this.log.warn(`Bakong check failed: ${(e as Error).message}`);
+      logEvent('warn', 'payment_failed', 'Bakong check failed', { method: 'KHQR', storeId: row.storeId, reason: 'bakong_unreachable', exception: (e as Error).constructor?.name, errorMessage: (e as Error).message });
     }
     return this.prisma.khqrPayment.update({ where: { id: row.id }, data: { lastCheckedAt: new Date() } });
   }

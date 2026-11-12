@@ -85,6 +85,41 @@ Create your stores (Stores page: tax, riel rate, café mode, KHQR account…), u
 
 Check the server alone, without Cloudflare: `curl http://127.0.0.1:3000/health` on the server.
 
+## ML anomaly detector (optional)
+
+The `ml-detector` container reads the API's JSON logs (`deploy/logs`, read-only), scores the newest 30-second window
+every 10 s with fixed rules, Isolation Forest and PCA, and can send alerts to Telegram. It has no published port:
+only the API reaches it, on the internal Docker network. It needs about 200 MB, plus about 600 MB while training on
+one day of logs (limit: 1.5 GB). Check that the server has room: `free -h`.
+
+1. In `deploy/.env`: add `monitoring` to `COMPOSE_PROFILES` (e.g. `COMPOSE_PROFILES=tunnel,monitoring`), set
+   `DETECTOR_API_KEY` (`openssl rand -hex 24`) and, for alerts, `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`.
+2. Start it:
+
+```bash
+docker compose up -d --build
+```
+
+3. Until it is trained only the rules run (5xx share, slow responses, ERROR lines, failed payments, webhooks given
+   up). **Train after at least 1 day of normal traffic**, choosing a period without incidents. Windows where the
+   rules fire are left out of the training automatically:
+
+```bash
+docker compose exec ml-detector python -m detector.cli train --hours 24
+```
+
+   The running detector loads the new models within 10 seconds; they are kept in `deploy/models`. Train on 24–48
+   hours (a week needs more memory than the container is given). Train again after big changes: a new store,
+   new opening hours, a much busier season.
+
+4. Status:
+
+```bash
+docker compose exec ml-detector python -c "import json,urllib.request,os; r=urllib.request.Request('http://127.0.0.1:8000/health',headers={'X-API-Key':os.environ.get('DETECTOR_API_KEY','')}); print(json.dumps(json.load(urllib.request.urlopen(r)),indent=1))"
+```
+
+Stopping it (`docker compose stop ml-detector`) has no effect on the POS.
+
 ## Updating to a new version
 
 ```bash

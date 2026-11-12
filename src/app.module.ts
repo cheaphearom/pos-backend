@@ -6,9 +6,9 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
 import { AuthGuard } from './common/auth.guard';
-import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 import { ClientThrottlerGuard } from './common/throttler.guard';
 import { config } from './config';
+import { AllExceptionsFilter } from './logging/all-exceptions.filter';
 import { CustomersModule } from './customers/customers.module';
 import { ApiRootController, HealthController } from './health.controller';
 import { ApiKeysModule } from './integrations/api-keys.module';
@@ -75,7 +75,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
   providers: [
     { provide: APP_GUARD, useClass: ClientThrottlerGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
-    { provide: APP_FILTER, useClass: PrismaExceptionFilter },
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
 })
 export class AppModule {}

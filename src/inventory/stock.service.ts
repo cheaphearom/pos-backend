@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma, StockMovementType } from '@prisma/client';
 import { config } from '../config';
+import { logEvent } from '../logging/logger';
 
 export interface MovementInput {
   storeId: string;
@@ -55,6 +56,7 @@ export class StockService {
         where: { storeId_productId: { storeId: m.storeId, productId: m.productId } },
         select: { quantity: true },
       });
+      logEvent('warn', 'stock_negative', 'Not enough stock', { storeId: m.storeId, productId: m.productId, movement: m.type, quantity: Number(delta), available: Number(inv?.quantity ?? 0), blocked: true });
       throw new BadRequestException(
         `Not enough stock for ${product?.name ?? m.productId} (${product?.sku}): available ${inv?.quantity ?? 0}, needed ${delta.abs()}`,
       );
@@ -75,6 +77,9 @@ export class StockService {
         userId: m.userId ?? null,
       },
     });
+    if (balanceAfter.isNegative() && delta.isNegative()) {
+      logEvent('warn', 'stock_negative', 'Stock below zero', { storeId: m.storeId, productId: m.productId, movement: m.type, quantity: Number(delta), balanceAfter: Number(balanceAfter), blocked: false });
+    }
     const before = balanceAfter.minus(delta);
     return {
       storeId: m.storeId,

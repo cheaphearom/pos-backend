@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { AdjustStockDto, CreateTransferDto, InventoryQueryDto, MovementQueryDto, TransferQueryDto, UpdateInventoryDto } from './inventory.dto';
 import { MovementResult, StockService } from './stock.service';
+import { logEvent } from '../logging/logger';
 
 @Injectable()
 export class InventoryService {
@@ -75,6 +76,7 @@ export class InventoryService {
       }
       return out;
     });
+    logEvent('info', 'stock_adjusted', 'Stock adjusted', { storeId: dto.storeId, type: dto.type, items: results.length });
     await this.webhooks.emit('stock.adjusted', { storeId: dto.storeId, type: dto.type, reference: dto.reference, items: results });
     await this.emitLowStock(results);
     return { items: results };

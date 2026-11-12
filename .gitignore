@@ -10,3 +10,9 @@ dump.rdb
 # Production secrets and backups
 deploy/.env
 deploy/backups/
+logs/
+# ML detector
+__pycache__/
+.pytest_cache/
+monitoring/ml-detector/models/
+models/
