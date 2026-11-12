@@ -92,7 +92,7 @@ export class MemberAuthService {
   private async send(phone: string, code: string) {
     const message = `${code} is your ${memberConfig.brand} login code. It expires in ${memberConfig.otpMinutes} minutes. Do not share it.`;
     if (memberConfig.otpMode === 'dev') {
-      this.log.warn(`[dev] login code for ${phone}: ${code}`);
+      this.log.warn('[dev] login code created; it is shown in the member app (MEMBER_OTP_MODE=dev)');
       return;
     }
     if (!memberConfig.otpWebhookUrl) throw new ServiceUnavailableException('Login by SMS is not set up yet (MEMBER_OTP_WEBHOOK_URL)');
@@ -105,7 +105,7 @@ export class MemberAuthService {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (e) {
-      this.log.error(`Could not send login code to ${phone}: ${(e as Error).message}`);
+      this.log.error(`Could not send login code: ${(e as Error).message}`);
       throw new ServiceUnavailableException('Could not send the code right now. Please try again.');
     }
   }

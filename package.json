@@ -7,7 +7,6 @@
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
     "dev": "nest start --watch",
-    "dev": "nest start --watch",
     "test": "jest",
     "test:smoke": "node test/smoke.mjs",
     "postinstall": "prisma generate",
@@ -35,6 +34,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "helmet": "^8.1.0",
+    "pino": "^9.14.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },
@@ -52,10 +52,16 @@
     "typescript": "~5.9.2"
   },
   "jest": {
-    "moduleFileExtensions": ["js", "json", "ts"],
+    "moduleFileExtensions": [
+      "js",
+      "json",
+      "ts"
+    ],
     "rootDir": ".",
     "testRegex": ".*\\.spec\\.ts$",
-    "transform": { "^.+\\.ts$": "ts-jest" },
+    "transform": {
+      "^.+\\.ts$": "ts-jest"
+    },
     "testEnvironment": "node"
   },
   "engines": {

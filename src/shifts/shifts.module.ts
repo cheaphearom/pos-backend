@@ -8,6 +8,10 @@ import { DateRangeQueryDto, dateFilter } from '../common/date-range';
 import { pageArgs, toPage } from '../common/pagination';
 import { assertStoreAccess, Principal, storeScope } from '../common/principal';
 import { PrismaService } from '../prisma/prisma.service';
+import { logEvent } from '../logging/logger';
+
+/** Shift close: a cash difference larger than this (in the store currency) is logged as cash_mismatch. */
+const CASH_MISMATCH_THRESHOLD = Number(process.env.CASH_MISMATCH_THRESHOLD || 1);
 
 export class OpenShiftDto {
   @IsUUID()
@@ -53,7 +57,9 @@ export class ShiftsService {
     assertStoreAccess(p, dto.storeId);
     const existing = await this.prisma.shift.findFirst({ where: { userId: p.id, storeId: dto.storeId, status: 'OPEN' } });
     if (existing) throw new BadRequestException('You already have an open shift in this store');
-    return this.prisma.shift.create({ data: { storeId: dto.storeId, userId: p.id, openingCash: dto.openingCash, openingKhr: dto.openingKhr ?? 0 } });
+    const shift = await this.prisma.shift.create({ data: { storeId: dto.storeId, userId: p.id, openingCash: dto.openingCash, openingKhr: dto.openingKhr ?? 0 } });
+    logEvent('info', 'shift_opened', 'Shift opened', { storeId: dto.storeId, openingCash: dto.openingCash });
+    return shift;
   }
 
   /** The caller's open shift in a store, or null. */
@@ -78,10 +84,14 @@ export class ShiftsService {
         expectedKhr: summary.khr.expected,
         note: dto.note,
       },
-    }).then((s) => ({
-      ...s, summary, difference: D(dto.closingCash).minus(summary.expectedCash),
-      differenceKhr: dto.closingKhr === undefined ? null : dto.closingKhr - summary.khr.expected,
-    }));
+    }).then((s) => {
+      const difference = D(dto.closingCash).minus(summary.expectedCash);
+      const differenceKhr = dto.closingKhr === undefined ? null : dto.closingKhr - summary.khr.expected;
+      const fields = { storeId: s.storeId, expectedCash: summary.expectedCash, difference, differenceKhr, durationMin: Math.round((Date.now() - s.openedAt.getTime()) / 60_000) };
+      logEvent('info', 'shift_closed', 'Shift closed', fields);
+      if (difference.abs().gt(CASH_MISMATCH_THRESHOLD)) logEvent('warn', 'cash_mismatch', 'Counted cash differs from expected', fields);
+      return { ...s, summary, difference, differenceKhr };
+    });
   }
 
   async get(p: Principal, id: string) {

@@ -6,6 +6,8 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { config } from './config';
+import { accessLog } from './logging/access-log.middleware';
+import { JsonNestLogger } from './logging/logger';
 
 // BigInt ids (stock movements, loyalty history) are sent to clients as strings.
 (BigInt.prototype as any).toJSON = function () {
@@ -13,11 +15,13 @@ import { config } from './config';
 };
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // JSON logs (stdout + logs/pos-api.log) in the format the ML detector reads.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { logger: new JsonNestLogger() });
   // Behind Cloudflare + nginx: take the customer's real IP from X-Forwarded-For (rate limits, audit log).
   // TRUST_PROXY = number of proxies in front of the API (2 = Cloudflare Tunnel + nginx).
   if (process.env.TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });
+  app.use(accessLog); // one event=http_request line per request, X-Request-Id
   app.use(helmet());
   app.enableCors({ origin: config.corsOrigins.includes('*') ? true : config.corsOrigins });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));

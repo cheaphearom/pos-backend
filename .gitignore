@@ -10,3 +10,4 @@ dump.rdb
 # Production secrets and backups
 deploy/.env
 deploy/backups/
+logs/

@@ -5,6 +5,7 @@ import * as bcrypt from 'bcryptjs';
 import { createHash, randomBytes } from 'crypto';
 import { config, REPORT_TIMEZONE } from '../config';
 import { PrismaService } from '../prisma/prisma.service';
+import { logEvent } from '../logging/logger';
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
@@ -20,6 +21,7 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { email: email.toLowerCase() } });
     // Same message for unknown email and wrong password, so attackers cannot discover accounts.
     if (!user || !user.isActive || !(await bcrypt.compare(password, user.passwordHash))) {
+      logEvent('warn', 'login_failed', 'Login failed', { reason: !user ? 'unknown_user' : !user.isActive ? 'inactive_user' : 'wrong_password' });
       this.audit.add(null, { action: 'LOGIN_FAILED', entityType: 'user', entityId: user?.id ?? null, summary: `Failed login for ${email.toLowerCase().slice(0, 150)}${user && !user.isActive ? ' (inactive user)' : ''}` });
       throw new UnauthorizedException('Invalid email or password');
     }

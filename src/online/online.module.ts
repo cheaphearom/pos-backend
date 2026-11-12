@@ -14,6 +14,7 @@ import { KhqrService, PaymentsModule } from '../payments/payments.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { SalesModule } from '../sales/sales.module';
 import { SalesService } from '../sales/sales.service';
+import { logEvent } from '../logging/logger';
 
 export class OnlineItemDto {
   @IsUUID()
@@ -175,6 +176,8 @@ export class OnlineOrdersService {
         customerId: member?.id ?? null, walletCardId, redeemPoints: quote.pointsRedeemed,
       },
     });
+
+    logEvent('info', 'online_order_created', 'Online order created', { storeId: store.id, storeName: store.name, payMethod: dto.payMethod, orderType: order.orderType, amount: order.total, member: !!member });
 
     if (walletCardId) {
       // Wallet: pay right now. If it fails nothing was taken, so the order is simply cancelled.
