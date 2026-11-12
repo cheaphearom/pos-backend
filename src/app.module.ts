@@ -7,7 +7,8 @@ import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
 import { AuthGuard } from './common/auth.guard';
 import { ClientThrottlerGuard } from './common/throttler.guard';
-import { config } from './config';
+import { chaosConfig, config } from './config';
+import { ChaosModule } from './chaos/chaos.module';
 import { AllExceptionsFilter } from './logging/all-exceptions.filter';
 import { CustomersModule } from './customers/customers.module';
 import { ApiRootController, HealthController } from './health.controller';
@@ -22,6 +23,7 @@ import { WalletModule } from './wallet/wallet.module';
 import { CouponsModule } from './coupons/coupons.module';
 import { VouchersModule } from './vouchers/vouchers.module';
 import { LookupModule } from './lookup.controller';
+import { MonitoringModule } from './monitoring/monitoring.module';
 import { ModifiersModule } from './modifiers/modifiers.module';
 import { KitchenModule } from './kitchen/kitchen.module';
 import { RecipesModule } from './recipes/recipes.module';
@@ -70,6 +72,9 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     MemberModule,
     ProductionModule,
     RegistersModule,
+    MonitoringModule,
+    // Fault injection: only loaded when CHAOS_ENABLED=true (refused in production, see config.ts)
+    ...(chaosConfig.enabled ? [ChaosModule] : []),
   ],
   controllers: [HealthController, ApiRootController],
   providers: [

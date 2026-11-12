@@ -21,7 +21,7 @@ With DETECTOR_API_KEY set, every endpoint except /health needs the header ``X-AP
 
 Configuration (environment variables): DETECTOR_PROFILE (ecommerce|pos), DETECTOR_API_KEY, LOG_DIR, LABELS_PATH, RESULTS_DIR, MODEL_DIR, WINDOW,
 STEP, GRACE, LIVE_DETECTION, LIVE_INTERVAL, BUFFER_MINUTES, TAIL_FROM_START, SEED,
-TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, NOTIFY_METHODS, NOTIFY_RESOLVE_AFTER_S.
+TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, NOTIFY_METHODS, NOTIFY_RESOLVE_AFTER_S, NOTIFY_TIMEZONE, NOTIFY_MIN_WINDOWS, TELEGRAM_API_URL.
 """
 from __future__ import annotations
 
@@ -90,7 +90,11 @@ class Settings:
     notify_methods: tuple[str, ...] = field(default_factory=lambda: tuple(
         m.strip() for m in os.environ.get("NOTIFY_METHODS", "").split(",") if m.strip()))
     notify_resolve_after_s: float = field(
-        default_factory=lambda: float(os.environ.get("NOTIFY_RESOLVE_AFTER_S", "60")))
+        default_factory=lambda: float(os.environ.get("NOTIFY_RESOLVE_AFTER_S") or "60"))
+    # 0 = the profile's notify_min_windows
+    notify_min_windows: int = field(default_factory=lambda: int(os.environ.get("NOTIFY_MIN_WINDOWS") or "0"))
+    notify_timezone: str = field(default_factory=lambda: os.environ.get("NOTIFY_TIMEZONE", "UTC").strip() or "UTC")
+    telegram_api_url: str = field(default_factory=lambda: os.environ.get("TELEGRAM_API_URL", "https://api.telegram.org"))
     cors_allow_origins: tuple[str, ...] = field(default_factory=lambda: tuple(
         o.strip() for o in os.environ.get("CORS_ALLOW_ORIGINS", "*").split(",") if o.strip()))
     api_key: str = field(default_factory=lambda: os.environ.get("DETECTOR_API_KEY", "").strip())
@@ -150,11 +154,14 @@ class DetectorState:
         self.baseline: dict = default_baseline(profile=self.profile)
         self.telegram: TelegramSender | None = None
         if settings.telegram_token and settings.telegram_chat_id:
-            self.telegram = TelegramSender(settings.telegram_token, settings.telegram_chat_id)
+            self.telegram = TelegramSender(settings.telegram_token, settings.telegram_chat_id,
+                                           api_url=settings.telegram_api_url)
         if send is None and self.telegram is not None:
             send = self.telegram.send_async
         self.notify_methods = settings.notify_methods or self.profile.notify_methods
-        self.notifier = (IncidentNotifier(send, self.notify_methods, settings.notify_resolve_after_s)
+        self.notifier = (IncidentNotifier(send, self.notify_methods, settings.notify_resolve_after_s,
+                                          self.profile.system_name, settings.notify_timezone,
+                                          settings.notify_min_windows or self.profile.notify_min_windows)
                          if send is not None else None)
 
     # -- persistence -------------------------------------------------------------------
@@ -405,6 +412,8 @@ def create_app(settings: Settings | None = None, send=None) -> FastAPI:
             log.exception("could not load saved models")
         task = asyncio.create_task(live_loop()) if settings.live else None
         yield
+        if state.telegram is not None:
+            state.telegram.close()
         if task:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -435,6 +444,9 @@ def create_app(settings: Settings | None = None, send=None) -> FastAPI:
                 "models": state.status(), "buffered_records": int(len(state.buffer)), "polls": state.polls,
                 "last_window_end": last["window_end"] if last else None,
                 "telegram_notifications": state.telegram is not None, "notify_methods": list(state.notify_methods),
+                "telegram": ({"pending": state.telegram.pending, "sent": state.telegram.sent,
+                              "dropped": state.telegram.dropped, "last_error": state.telegram.last_error}
+                             if state.telegram is not None else None),
                 "training": {k: v for k, v in state.training.items() if k in ("hours", "windows", "warning")}}
 
     @app.post("/notify/test")
@@ -443,7 +455,8 @@ def create_app(settings: Settings | None = None, send=None) -> FastAPI:
             raise HTTPException(status_code=400,
                                 detail="Telegram is not configured: set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID")
         try:
-            state.telegram.send("✅ Test message from the log anomaly detector. Telegram alerts are working.")
+            where = f" for the {state.profile.system_name}" if state.profile.system_name else ""
+            state.telegram.send(f"✅ Test message from the log anomaly detector{where}. Telegram alerts are working.")
         except RuntimeError as e:
             raise HTTPException(status_code=502, detail=str(e)) from e
         return {"sent": True}
@@ -506,7 +519,8 @@ def create_app(settings: Settings | None = None, send=None) -> FastAPI:
         if points:
             cutoff = points[-1]["t"] - minutes * 60.0
             points = [p for p in points if p["t"] >= cutoff]
-        return {"methods": list(state.status().keys() - {"trained_at"}),
+        available = [m for m, ready in state.status().items() if m != "trained_at" and ready]
+        return {"methods": available,
                 "points": [{"time": _iso(p["t"]), **p} for p in points]}
 
     @app.get("/alerts")

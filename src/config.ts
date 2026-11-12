@@ -61,3 +61,21 @@ export const khqrConfig = {
   token: process.env.BAKONG_TOKEN ?? '',
   expiryMinutes: Number(process.env.KHQR_EXPIRY_MINUTES ?? 5),
 };
+
+/**
+ * ML anomaly detector (monitoring/ml-detector). Production: http://ml-detector:8000 on the internal
+ * Docker network (never published). Empty = monitoring shows the detector as not set up.
+ */
+export const detectorConfig = {
+  url: (process.env.DETECTOR_URL ?? 'http://localhost:8000').trim().replace(/\/+$/, ''),
+  apiKey: (process.env.DETECTOR_API_KEY ?? '').trim(),
+};
+
+/**
+ * Fault injection for testing the anomaly detector (development only). Off unless CHAOS_ENABLED=true,
+ * and refused in production: the API does not start with both.
+ */
+export const chaosConfig = { enabled: process.env.CHAOS_ENABLED === 'true' };
+if (chaosConfig.enabled && config.nodeEnv === 'production') {
+  throw new Error('CHAOS_ENABLED=true is not allowed in production (NODE_ENV=production): fault injection is for testing only');
+}

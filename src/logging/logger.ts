@@ -147,14 +147,32 @@ export function writeLog(level: Level, text: string, fields: Fields = {}, opts: 
     const pairs = kv(safe);
     const message = scrubText(pairs ? `${text} ${pairs}` : text);
     logger[level]({ logger_name: opts.logger ?? 'App', ...safe }, message);
+    if (typeof safe.event === 'string') for (const fn of eventListeners) fn(safe.event, safe);
   } catch {
     /* logging must never break a request */
   }
 }
 
-/** A business or technical event: `event=<name>` plus safe fields. */
+type EventListener = (event: string, fields: Fields) => void;
+const eventListeners = new Set<EventListener>();
+
+/** Called for every logged line that has an `event` (used by the in-memory monitoring metrics). */
+export function onLogEvent(fn: EventListener): () => void {
+  eventListeners.add(fn);
+  return () => eventListeners.delete(fn);
+}
+
+/** Store names by id, so every event with a storeId also names the store (the detector's alerts show it). */
+const storeNames = new Map<string, string>();
+export function rememberStoreName(id: string, name: string) {
+  if (id && name) storeNames.set(id, name);
+}
+
+/** A business or technical event: `event=<name>` plus safe fields (and storeName when storeId is known). */
 export function logEvent(level: Level, event: string, text: string, fields: Fields = {}, opts: LogOptions = {}) {
-  writeLog(level, text, { event, ...fields }, { logger: 'BusinessEvent', ...opts });
+  const id = typeof fields.storeId === 'string' ? fields.storeId : undefined;
+  const named = id && !fields.storeName && storeNames.has(id) ? { storeName: storeNames.get(id) } : {};
+  writeLog(level, text, { event, ...fields, ...named }, { logger: 'BusinessEvent', ...opts });
 }
 
 /** Error fields in the e-commerce format: exception (class name), errorMessage, stack_trace. */

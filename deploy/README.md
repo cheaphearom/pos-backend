@@ -118,6 +118,17 @@ docker compose exec ml-detector python -m detector.cli train --hours 24
 docker compose exec ml-detector python -c "import json,urllib.request,os; r=urllib.request.Request('http://127.0.0.1:8000/health',headers={'X-API-Key':os.environ.get('DETECTOR_API_KEY','')}); print(json.dumps(json.load(urllib.request.urlopen(r)),indent=1))"
 ```
 
+Alerts go to Telegram once when a problem starts and once when it is resolved (no alert for
+`NOTIFY_RESOLVE_AFTER_S`, default 60 s), with the suspected service (`pos-api` or `pos-worker`), the kind of problem,
+the strongest signals, example log lines and, when most failures come from one store, the store. Times are in `TZ`.
+If Telegram cannot be reached the detector keeps running and sends the message later. Test it:
+
+```bash
+docker compose exec ml-detector python -c "import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:8000/notify/test',method='POST',headers={'X-API-Key':os.environ.get('DETECTOR_API_KEY','')}); print(urllib.request.urlopen(r).read().decode())"
+```
+
+(or the "Send test Telegram message" button on the System monitor page of the web app).
+
 Stopping it (`docker compose stop ml-detector`) has no effect on the POS.
 
 ## Updating to a new version

@@ -40,6 +40,8 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
+      # Fault injection is for testing only: always off here (the API also refuses it in production)
+      CHAOS_ENABLED: "false"
       DATABASE_URL: postgresql://${POSTGRES_USER:-pos}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pos}?schema=public
       REDIS_URL: redis://redis:6379
       TRUST_PROXY: ${TRUST_PROXY:-1}
@@ -76,6 +78,9 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       NOTIFY_METHODS: ${NOTIFY_METHODS:-}
       NOTIFY_RESOLVE_AFTER_S: ${NOTIFY_RESOLVE_AFTER_S:-60}
+      NOTIFY_MIN_WINDOWS: ${NOTIFY_MIN_WINDOWS:-}
+      # times in the Telegram messages: the business time zone (TZ in deploy/.env)
+      NOTIFY_TIMEZONE: ${NOTIFY_TIMEZONE:-${TZ:-UTC}}
       TZ: UTC
     volumes:
       - ./logs:/logs:ro
