@@ -70,13 +70,17 @@ docker compose exec ml-detector python -m detector.cli train --hours 1
 npm run chaos -- DB_TIMEOUT --duration 120
 ```
 
-   Within about 30 seconds Telegram gets **"🚨 Anomaly detected in the POS"** naming `pos-api` and a database
-   problem, with the strongest signals and real error lines. The System monitor page shows the scores above
-   their dashed line and the alert in "Recent alerts".
+   Within about a minute Telegram gets **"🚨 Anomaly detected in the POS"** naming `pos-api`, "slow responses;
+   slow database", the strongest signals (e.g. p95 3356 ms, normal ≈ 35 ms) and real error lines (Prisma's
+   connection-pool timeout). The System monitor page shows the scores above their dashed line, the error rate and
+   p95 charts jump, and the alert is in "Recent alerts".
 
-8. **Minute 10** – the fault ends by itself. About a minute later Telegram gets **"✅ Resolved in the POS"**.
+8. **Minute 10** – the fault ends by itself. One to three minutes later Telegram gets **"✅ Resolved in the POS"**:
+   the last slow requests of the fault still finish with errors for a short while, and with only 7 minutes of
+   training PCA is very sensitive.
 
-9. Optional, **minute 12** – errors for 90 seconds, a second incident:
+9. Optional, **minute 12** – errors for 90 seconds. It is a second incident only when the first one was already
+   resolved; otherwise it is reported as part of it (one message per incident):
 
 ```bash
 npm run chaos -- ERROR --rate 0.3 --duration 90
@@ -87,3 +91,17 @@ npm run chaos -- ERROR --rate 0.3 --duration 90
     server (production trains on its own, real traffic).
 
 Other faults: `npm run chaos -- LATENCY --latency 2500 --duration 90`.
+
+## A real run (12 November 2026)
+
+| Time (UTC) | |
+|---|---|
+| 09:16:4x | load starts: 3 cashiers, 2 managers (≈ 26 sales per minute) |
+| 09:23:2x | trained on 7 minutes of logs (66 windows) |
+| 09:23:4x | `DB_TIMEOUT` for 120 s |
+| 09:23:57 | 🚨 Telegram: `pos-api`, "slow responses; slow database", p95 3356 ms (normal ≈ 35 ms), pool-timeout error lines |
+| 09:27:45 | `ERROR` 30 % for 90 s (the first incident was still open: same incident) |
+| 09:30:38 | ✅ Telegram: resolved, alerting lasted 5.7 min, detected by PCA and the rules |
+
+The load kept running through both faults: 1613 requests, 393 sales, 22 refunds, 85 failed requests. (The run
+was before the 4-window wait for ML alerts; with it the first message comes about 30 s later.)
