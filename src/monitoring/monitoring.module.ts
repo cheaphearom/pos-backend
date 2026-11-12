@@ -83,7 +83,7 @@ export class MonitoringService implements OnModuleDestroy {
     };
   }
 
-  /** Webhook queue: jobs waiting / running / failed, and failures in the last hour. */
+  /** Webhook queue: jobs waiting / running / retrying (delayed) / failed, and failures in the last hour. */
   async queueStatus() {
     try {
       const [counts, recentFailed] = await withTimeout(
@@ -91,7 +91,8 @@ export class MonitoringService implements OnModuleDestroy {
       );
       const hourAgo = Date.now() - 3_600_000;
       const failedLastHour = recentFailed.filter((j) => (j?.finishedOn ?? 0) > hourAgo).length;
-      const status: Level = counts.waiting > 100 || failedLastHour > 0 ? 'warn' : 'ok';
+      // delayed = deliveries waiting for a retry after a failed attempt
+      const status: Level = counts.waiting > 100 || counts.delayed > 0 || failedLastHour > 0 ? 'warn' : 'ok';
       return { status, waiting: counts.waiting, active: counts.active, delayed: counts.delayed, failed: counts.failed, failedLastHour };
     } catch {
       return { status: 'fail' as Level, error: 'queue not reachable (Redis)' };
