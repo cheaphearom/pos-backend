@@ -6,6 +6,11 @@ services:
   api:
     networks: [default, pos-monitoring]
 
+  # The Cloudflare Tunnel (COMPOSE_PROFILES=tunnel) can then also reach Grafana of the ml-detector stack
+  # (public hostname -> http://grafana:3000, protected by Cloudflare Access; see deploy/README.md).
+  cloudflared:
+    networks: [default, pos-monitoring]
+
   alloy:
     image: grafana/alloy:v1.10.0
     restart: unless-stopped

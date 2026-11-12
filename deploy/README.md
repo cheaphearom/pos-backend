@@ -118,6 +118,24 @@ docker compose exec ml-detector python -m detector.cli train --hours 24
 
 5. Press **Send test Telegram message** on the System monitor page.
 
+### Grafana through Cloudflare
+
+Grafana listens on the server only. To open it from anywhere, put it behind the Cloudflare Tunnel **and Cloudflare
+Access** (a login by Cloudflare before Grafana's own; free for up to 50 users). With the monitoring add-on on, the
+`cloudflared` container is on the `pos-monitoring` network and can reach Grafana.
+
+1. **Zero Trust → Networks → Tunnels →** your tunnel **→ Public hostname → Add**: subdomain `grafana`, your
+   domain, **Service type `HTTP`, URL `grafana:3000`**.
+2. **Zero Trust → Access → Applications → Add → Self-hosted**: domain `grafana.yourcafe.com`; a policy that
+   **Allows** only your **Emails**; login method One-time PIN. Do this before using the address: without it, only
+   Grafana's password protects the logs.
+3. In the ml-detector `.env`: `GRAFANA_ROOT_URL=https://grafana.yourcafe.com`, then
+   `docker compose up -d grafana` there.
+4. Open the address in a private window: Cloudflare's code by email, then Grafana's login (`admin` /
+   `GRAFANA_ADMIN_PASSWORD`). Give other people their own Grafana users with the Viewer role.
+
+Only Grafana gets a hostname: Loki and the detector stay private.
+
 Loki on another server: set `LOKI_PUSH_URL` (e.g. `https://loki.example.com/loki/api/v1/push` behind Cloudflare Access
 or over Tailscale) and `DETECTOR_URL`, and leave out the API's network line in `docker-compose.monitoring.yml`.
 Turning the add-on off (remove `COMPOSE_FILE`, `docker compose up -d --remove-orphans`) has no effect on the POS.
