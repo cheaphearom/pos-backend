@@ -52,7 +52,21 @@ async function call(method, path, { token, body } = {}) {
 async function login(email, password = PASSWORD) {
   const r = await call('POST', '/auth/login', { body: { email, password } });
   if (r.status !== 200 && r.status !== 201) return null;
-  return r.json.accessToken;
+  return r.json?.accessToken ?? null;
+}
+
+/** Runs `step` until the end; a failed request (e.g. during a test fault) never stops the traffic. */
+async function loop(who, meanPauseMs, step) {
+  while (Date.now() < end) {
+    await pause(meanPauseMs);
+    if (Date.now() >= end) break;
+    try {
+      await step();
+    } catch (e) {
+      stats.scriptErrors = (stats.scriptErrors ?? 0) + 1;
+      if (stats.scriptErrors <= 5) console.error(`${who}: ${e.message} (continuing)`);
+    }
+  }
 }
 
 /** Logs in (again every ~10 minutes, as tills do when the access token expires). */
@@ -77,23 +91,25 @@ async function restock(storeId, productId) {
     body: { storeId, type: 'PURCHASE', reference: 'load-test restock', items: [{ productId, quantity: 50 }] },
   });
   if (r.status < 300) stats.restocks++;
+  else adminToken = null; // log in again next time
 }
 
 async function cashier(email) {
   const auth = session(email);
-  let token = await auth();
-  if (!token) return console.error(`cannot log in as ${email} (seed data?)`);
-  const me = (await call('GET', '/auth/me', { token })).json;
-  const storeId = me.stores[0].id;
-  await call('POST', '/shifts/open', { token, body: { storeId, openingCash: 50 } }); // 400 if already open
-  const products = ((await call('GET', `/products?storeId=${storeId}&limit=100`, { token })).json?.data ?? [])
-    .filter((p) => p.barcode && p.isActive && !p.isIngredient);
-  if (!products.length) return console.error(`${email}: no products with a barcode`);
-
-  while (Date.now() < end) {
-    await pause(60_000 / RATE);
-    if (Date.now() >= end) break;
-    token = await auth();
+  let storeId = null;
+  let products = [];
+  await loop(email, 60_000 / RATE, async () => {
+    const token = await auth();
+    if (!token) return;
+    if (!products.length) {
+      // first time (or after a failed start): store, shift, catalogue
+      storeId = (await call('GET', '/auth/me', { token })).json?.stores?.[0]?.id;
+      if (!storeId) return;
+      await call('POST', '/shifts/open', { token, body: { storeId, openingCash: 50 } }); // 400 if already open
+      products = ((await call('GET', `/products?storeId=${storeId}&limit=100`, { token })).json?.data ?? [])
+        .filter((p) => p.barcode && p.isActive && !p.isIngredient);
+      if (!products.length) return;
+    }
     const basket = Array.from({ length: 1 + Math.floor(Math.random() * 3) }, () => pick(products));
     for (const p of basket) await call('GET', `/products/lookup?code=${p.barcode}&storeId=${storeId}`, { token });
     if (Math.random() < 0.15) await call('GET', `/products?storeId=${storeId}&search=${encodeURIComponent(pick(products).name.slice(0, 4))}&limit=10`, { token });
@@ -102,18 +118,17 @@ async function cashier(email) {
     const r = await call('POST', '/sales', { token, body: { storeId, items, payments: [{ method: 'CASH', amount: 200 }] } });
     if (r.status === 201) stats.sales++;
     else if (r.status === 400 && /Not enough stock/.test(r.json?.message ?? '')) for (const i of items) await restock(storeId, i.productId);
-  }
+  });
 }
 
 async function manager(email) {
   const auth = session(email);
-  while (Date.now() < end) {
-    await pause(45_000);
-    if (Date.now() >= end) break;
+  await loop(email, 45_000, async () => {
     const token = await auth();
-    if (!token) return console.error(`cannot log in as ${email}`);
-    const me = (await call('GET', '/auth/me', { token })).json;
-    const storeId = pick(me.stores).id;
+    if (!token) return;
+    const stores = (await call('GET', '/auth/me', { token })).json?.stores;
+    if (!stores?.length) return;
+    const storeId = pick(stores).id;
     await call('GET', `/reports/dashboard?storeId=${storeId}`, { token });
     if (Math.random() < 0.4) {
       const sales = (await call('GET', `/sales?storeId=${storeId}&limit=20`, { token })).json?.data ?? [];
@@ -127,7 +142,7 @@ async function manager(email) {
         }
       }
     }
-  }
+  });
 }
 
 function report() {
