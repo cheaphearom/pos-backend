@@ -6,7 +6,7 @@ import { join } from 'path';
 import { describeQuery } from '../prisma/prisma.service';
 import { accessLog, normalizePath } from './access-log.middleware';
 import { AllExceptionsFilter } from './all-exceptions.filter';
-import { errorFields, JsonNestLogger, logContext, logEvent, scrubText, setLogSinkForTests, writeLog } from './logger';
+import { errorFields, JsonNestLogger, logContext, logEvent, rememberStoreName, scrubText, setLogSinkForTests, writeLog } from './logger';
 import { RotatingFile } from './rotating-file';
 
 let lines: string[] = [];
@@ -36,6 +36,14 @@ describe('JSON log format', () => {
     logEvent('warn', 'webhook_failed', 'Webhook delivery failed', {}, { service: 'pos-worker' });
     writeLog('error', 'boom');
     expect(records().map((r) => [r.level, r.service])).toEqual([['WARN', 'pos-worker'], ['ERROR', 'pos-api']]);
+  });
+
+  it('adds the store name to events that have a known storeId', () => {
+    rememberStoreName('store-9', 'Siem Reap - Pub Street');
+    logEvent('warn', 'payment_failed', 'Payment failed', { storeId: 'store-9', method: 'KHQR' });
+    logEvent('warn', 'payment_failed', 'Payment failed', { storeId: 'unknown-store' });
+    expect(records()[0].storeName).toBe('Siem Reap - Pub Street');
+    expect(records()[1]).not.toHaveProperty('storeName');
   });
 
   it("routes Nest's own logger through the same format", () => {

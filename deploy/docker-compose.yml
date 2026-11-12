@@ -76,6 +76,8 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       NOTIFY_METHODS: ${NOTIFY_METHODS:-}
       NOTIFY_RESOLVE_AFTER_S: ${NOTIFY_RESOLVE_AFTER_S:-60}
+      # times in the Telegram messages: the business time zone (TZ in deploy/.env)
+      NOTIFY_TIMEZONE: ${NOTIFY_TIMEZONE:-${TZ:-UTC}}
       TZ: UTC
     volumes:
       - ./logs:/logs:ro

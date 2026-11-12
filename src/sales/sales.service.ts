@@ -20,7 +20,7 @@ import { RecipesService } from '../recipes/recipes.module';
 import { REPORT_TIMEZONE } from '../config';
 import { khrToUsd, splitChange } from './cash';
 import { CreateRefundDto, CreateSaleDto, SaleQueryDto, VoidSaleDto } from './sales.dto';
-import { logEvent } from '../logging/logger';
+import { logEvent, rememberStoreName } from '../logging/logger';
 
 /** A checkout error caused by the payment (KHQR, wallet, voucher, card, cash amount). */
 export const PAYMENT_ERROR = /KHQR|wallet|voucher|card|wrong PIN|payment|riel|exchange rate/i;
@@ -67,7 +67,7 @@ export class SalesService {
     const methods = [...new Set((dto.payments ?? []).map((x) => x.method))].join(',');
     try {
       const sale = await this.createSale(p, dto, opts);
-      this.storeNames.set(sale.storeId, sale.store.name);
+      rememberStoreName(sale.storeId, sale.store.name);
       logEvent('info', 'sale_completed', 'Sale completed', {
         storeId: sale.storeId, storeName: sale.store.name, channel: sale.channel, amount: sale.amountDue,
         items: sale.items.length, paymentMethod: methods, durationMs: Date.now() - start,
@@ -77,15 +77,12 @@ export class SalesService {
       const err = e as Error & { status?: number };
       const payment = err.status !== undefined && err.status < 500 && PAYMENT_ERROR.test(err.message);
       logEvent('warn', payment ? 'payment_failed' : 'sale_failed', payment ? 'Payment failed' : 'Sale failed', {
-        storeId: dto.storeId, storeName: this.storeNames.get(dto.storeId), channel: dto.channel ?? 'POS', paymentMethod: methods,
+        storeId: dto.storeId, channel: dto.channel ?? 'POS', paymentMethod: methods,
         exception: err.constructor?.name, status: err.status ?? 500, reason: err.message, durationMs: Date.now() - start,
       });
       throw e;
     }
   }
-
-  /** Store names seen in sales, so failure events can name the store without another query. */
-  private readonly storeNames = new Map<string, string>();
 
   private async createSale(p: Principal, dto: CreateSaleDto, opts: { walletVerified?: boolean } = {}) {
     assertStoreAccess(p, dto.storeId);
@@ -491,7 +488,7 @@ export class SalesService {
     const result = await this.refundSale(p, saleId, dto, opts);
     const sale = await this.prisma.sale.findUnique({ where: { id: saleId }, select: { storeId: true } }).catch(() => null);
     logEvent('info', 'sale_refunded', opts.voidReason ? 'Sale voided' : 'Sale refunded', {
-      storeId: sale?.storeId, storeName: sale ? this.storeNames.get(sale.storeId) : undefined, amount: result.amount, method: dto.method ?? 'CASH', voided: !!opts.voidReason, durationMs: Date.now() - start,
+      storeId: sale?.storeId, amount: result.amount, method: dto.method ?? 'CASH', voided: !!opts.voidReason, durationMs: Date.now() - start,
     });
     return result;
   }

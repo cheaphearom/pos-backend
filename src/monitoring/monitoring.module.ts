@@ -1,12 +1,12 @@
 import { InjectQueue } from '@nestjs/bullmq';
-import { Controller, Get, HttpCode, Injectable, Module, OnModuleDestroy, Post, Query } from '@nestjs/common';
+import { Controller, Get, HttpCode, Injectable, Module, OnModuleDestroy, OnModuleInit, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import { Queue } from 'bullmq';
 import { Roles } from '../common/decorators';
-import { onLogEvent } from '../logging/logger';
+import { onLogEvent, rememberStoreName } from '../logging/logger';
 import { PrismaService } from '../prisma/prisma.service';
 import { WEBHOOK_QUEUE } from '../webhooks/webhook-events';
 import { DetectorClient } from './detector.client';
@@ -43,7 +43,7 @@ export async function probe(fn: () => Promise<unknown>, slowMs: number) {
 }
 
 @Injectable()
-export class MonitoringService implements OnModuleDestroy {
+export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   readonly metrics = new MinuteMetrics();
   private readonly unsubscribe = onLogEvent((event, fields) => this.metrics.record(event, fields));
   private readonly startedAt = Date.now();
@@ -53,6 +53,15 @@ export class MonitoringService implements OnModuleDestroy {
     @InjectQueue(WEBHOOK_QUEUE) private readonly queue: Queue,
     private readonly detector: DetectorClient,
   ) {}
+
+  /** Store names for the log events (an alert can then say which store the failures come from). */
+  async onModuleInit() {
+    try {
+      for (const s of await this.prisma.store.findMany({ select: { id: true, name: true } })) rememberStoreName(s.id, s.name);
+    } catch {
+      /* the database may not be ready yet; sales fill the names in later */
+    }
+  }
 
   onModuleDestroy() {
     this.unsubscribe();
