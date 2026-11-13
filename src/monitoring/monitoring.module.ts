@@ -6,6 +6,7 @@ import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import { Queue } from 'bullmq';
 import { Roles } from '../common/decorators';
+import { startHeartbeat } from '../logging/heartbeat';
 import { onLogEvent, rememberStoreName } from '../logging/logger';
 import { PrismaService } from '../prisma/prisma.service';
 import { WEBHOOK_QUEUE } from '../webhooks/webhook-events';
@@ -47,6 +48,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   readonly metrics = new MinuteMetrics();
   private readonly unsubscribe = onLogEvent((event, fields) => this.metrics.record(event, fields));
   private readonly startedAt = Date.now();
+  private stopHeartbeat: () => void = () => undefined;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -54,8 +56,9 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
     private readonly detector: DetectorClient,
   ) {}
 
-  /** Store names for the log events (an alert can then say which store the failures come from). */
+  /** Heartbeat lines for the ML detector; store names for the log events (alerts can name the store). */
   async onModuleInit() {
+    this.stopHeartbeat = startHeartbeat();
     try {
       for (const s of await this.prisma.store.findMany({ select: { id: true, name: true } })) rememberStoreName(s.id, s.name);
     } catch {
@@ -64,6 +67,7 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy() {
+    this.stopHeartbeat();
     this.unsubscribe();
   }
 
@@ -121,6 +125,8 @@ export class MonitoringService implements OnModuleInit, OnModuleDestroy {
       if (h.training?.warning) notes.push(h.training.warning);
       if (ageS === null) notes.push('no log window scored yet');
       else if (ageS > 180) notes.push(`last window scored ${Math.round(ageS / 60)} min ago (no new logs?)`);
+      // the detector's own checks (ml-detector watch.py): the logs stopped arriving although this API answers
+      if (h.checks?.heartbeat?.status === 'down') notes.push(`no logs reach the detector: ${h.checks.heartbeat.detail || 'no heartbeat'}`);
       return {
         status: (notes.length ? 'warn' : 'ok') as Level,
         reachable: true,

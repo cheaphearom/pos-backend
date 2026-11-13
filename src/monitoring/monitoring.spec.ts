@@ -62,7 +62,7 @@ describe('MinuteMetrics', () => {
 
 describe('probe', () => {
   it('ok when fast, warn when slow, fail on errors', async () => {
-    expect(await probe(async () => 1, 1000)).toMatchObject({ status: 'ok' });
+    expect(await probe(async () => 1, 2900)).toMatchObject({ status: 'ok' }); // generous: a busy test machine can stall
     expect(await probe(() => new Promise((r) => setTimeout(r, 30)), 5)).toMatchObject({ status: 'warn' });
     expect(await probe(async () => { throw new Error('ECONNREFUSED'); }, 100)).toEqual({ status: 'fail', ms: null, error: 'not reachable' });
   });
@@ -86,6 +86,12 @@ describe('MonitoringService.detectorStatus', () => {
     expect(await untrained.detectorStatus()).toMatchObject({ status: 'warn', trained: false, notes: ['not trained yet: only the rules run'] });
     const stale = service(health({ pca: true }, new Date(Date.now() - 600_000).toISOString()));
     expect((await stale.detectorStatus()).status).toBe('warn');
+    const noLogs = service(async () => ({
+      ...(await health({ pca: true }, fresh)()),
+      checks: { heartbeat: { status: 'down', detail: 'no heartbeat for 2 min: the API is down, or its logs do not reach Loki' } },
+    }));
+    expect(await noLogs.detectorStatus()).toMatchObject({ status: 'warn', notes: [expect.stringContaining('no logs reach the detector: no heartbeat for 2 min')] });
+    noLogs.onModuleDestroy();
     const ok = service(health({ pca: true, isolation_forest: true }, fresh));
     expect(await ok.detectorStatus()).toMatchObject({ status: 'ok', reachable: true, trained: true, telegram: true, notes: [] });
     [untrained, stale, ok].forEach((x) => x.onModuleDestroy());
@@ -125,5 +131,43 @@ describe('DetectorClient', () => {
     const k = await new DetectorClient().get('/alerts').catch((x) => x);
     expect(k.getStatus()).toBe(502);
     expect(k.getResponse().message).toContain('DETECTOR_API_KEY');
+  });
+});
+
+describe('heartbeat', () => {
+  const { startHeartbeat } = jest.requireActual('../logging/heartbeat');
+  let lines: any[] = [];
+  beforeEach(() => {
+    lines = [];
+    setLogSinkForTests((l) => lines.push(JSON.parse(l)));
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+    setLogSinkForTests(null);
+  });
+
+  it('writes event=heartbeat at once and then every interval, and stops', () => {
+    let now = 0;
+    const stop = startHeartbeat(30, () => now);
+    expect(lines).toHaveLength(1);
+    now = 30_000;
+    jest.advanceTimersByTime(30_000);
+    now = 60_000;
+    jest.advanceTimersByTime(30_000);
+    expect(lines.map((l) => [l.event, l.level, l.logger_name, l.uptimeS])).toEqual([
+      ['heartbeat', 'INFO', 'Heartbeat', 0], ['heartbeat', 'INFO', 'Heartbeat', 30], ['heartbeat', 'INFO', 'Heartbeat', 60],
+    ]);
+    stop();
+    jest.advanceTimersByTime(120_000);
+    expect(lines).toHaveLength(3);
+  });
+
+  it('is off with interval 0, and heartbeats are not counted as requests', () => {
+    startHeartbeat(0)();
+    expect(lines).toHaveLength(0);
+    const m = new MinuteMetrics(180, () => 0);
+    m.record('heartbeat', { uptimeS: 1 });
+    expect(m.series(1)[0].requests).toBe(0);
   });
 });

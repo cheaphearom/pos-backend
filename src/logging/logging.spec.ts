@@ -220,7 +220,9 @@ describe('RotatingFile', () => {
     try {
       const f = new RotatingFile(dir, 'pos-api', { maxBytes: 200, maxFiles: 2 });
       for (let i = 0; i < 20; i++) f.write(`{"n":${i},"pad":"${'x'.repeat(40)}"}\n`);
-      await new Promise((r) => setTimeout(r, 300));
+      // gzip runs in the background: wait until a rolled file exists (not a fixed time, which a slow machine can miss)
+      for (let i = 0; i < 100 && !readdirSync(dir).some((n) => n.endsWith('.log.gz')); i++) await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 100)); // let the last rolling finish
       f.close();
       expect(existsSync(join(dir, 'pos-api.log'))).toBe(true);
       const rolled = readdirSync(dir).filter((n) => n.endsWith('.log.gz'));

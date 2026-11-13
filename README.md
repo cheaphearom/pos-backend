@@ -278,6 +278,7 @@ Every line is JSON in the format of the e-commerce services (`@timestamp`, `leve
 | `message_processed`, `message_failed` | INFO / WARN | webhook worker (`service=pos-worker`), with `durationMs` |
 | `webhook_delivered`, `webhook_failed`, `webhook_retries_exhausted` | INFO / WARN | webhook deliveries (only the receiver's host is logged) |
 | `db_query_slow` | WARN | a database query slower than `DB_SLOW_QUERY_MS` (table and statement only, never the SQL values) |
+| `heartbeat` | INFO | every `HEARTBEAT_INTERVAL_S` (30 s), even with no customers: the detector raises "No logs from the API" when they stop |
 
 **Privacy:** passwords, tokens, API keys, PINs, card and wallet numbers, phone numbers and e-mails are never
 written: such fields are dropped, and e-mails, JWTs, keys and long numbers are masked in any text
@@ -305,6 +306,7 @@ monitor page of pos-frontend shows all of this.
 | `LOG_LEVEL`, `LOG_MAX_MB`, `LOG_MAX_FILES` | `info`, 100, 14 | rotation: daily or at `LOG_MAX_MB`; rolled files are gzipped |
 | `DB_SLOW_QUERY_MS` | 500 | `db_query_slow` above this |
 | `CASH_MISMATCH_THRESHOLD` | 1 | `cash_mismatch` above this difference |
+| `HEARTBEAT_INTERVAL_S` | 30 | one `event=heartbeat` line every N seconds; 0 = off |
 | `DETECTOR_URL` | `http://localhost:8000` (production: `http://ml-detector:8000`) | the detector |
 | `DETECTOR_API_KEY` | empty | the same key as in the ml-detector stack (`openssl rand -hex 24`) |
 | `LOKI_PUSH_URL` | `http://loki:3100/loki/api/v1/push` | for Alloy, when Loki is on another server |
@@ -326,6 +328,16 @@ docker compose exec ml-detector python -m detector.cli train --hours 24
 ```
 
 Without the add-on the POS works exactly as before; the System monitor page then shows the detector as not reachable.
+
+### When the API itself is down
+
+A stopped API writes no logs, so the anomaly detection would see nothing. The detector therefore also **calls
+`http://api:3000/health` every 30 s** (🚨 "API not responding" after 2 failures, also when `/health` answers 503
+because the database or Redis is down) and watches the **heartbeat** lines (🚨 "No logs from the API" when none
+arrives for 2 minutes: the API is down, or Alloy / Loki do not deliver its logs). Both send one message when they
+start and one when they end, and show in Recent alerts. When the whole server is down, nothing on it can alert: add
+an outside uptime monitor (e.g. UptimeRobot) on `https://api.yourcafe.com/health`. The detector's own health is on
+the **ML detector** Grafana dashboard.
 
 ### Testing the alerts
 
