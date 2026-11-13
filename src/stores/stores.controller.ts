@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { CurrentPrincipal, Roles, Scopes } from '../common/decorators';
 import { Principal } from '../common/principal';
-import { CreateStoreDto, UpdateStoreDto } from './stores.dto';
+import { CreateStoreWithProductsDto, UpdateStoreDto } from './stores.dto';
 import { StoresService } from './stores.service';
 
 @ApiTags('Stores')
@@ -39,7 +39,7 @@ export class StoresController {
 
   @Roles(Role.SUPER_ADMIN)
   @Post()
-  create(@Body() dto: CreateStoreDto) {
+  create(@Body() dto: CreateStoreWithProductsDto) {
     return this.stores.create(dto);
   }
 

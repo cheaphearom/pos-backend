@@ -200,7 +200,7 @@ model Category {
   @@map("categories")
 }
 
-/// One shared catalogue for all stores. Store-specific price and stock live in Inventory.
+/// One shared catalogue for all stores. Which stores sell a product, and their own price and stock, live in Inventory.
 model Product {
   id          String   @id @default(uuid()) @db.Uuid
   sku         String   @unique @db.VarChar(50)
@@ -248,7 +248,8 @@ model Product {
   @@map("products")
 }
 
-/// Stock level and optional price override of one product in one store.
+/// One product in one store: whether the store sells it, its stock level and optional own price.
+/// A store sells only the products that have a row here with isListed = true.
 model Inventory {
   id            String   @id @default(uuid()) @db.Uuid
   storeId       String   @map("store_id") @db.Uuid
@@ -256,6 +257,8 @@ model Inventory {
   quantity      Decimal  @default(0) @db.Decimal(14, 3)
   reorderLevel  Decimal  @default(0) @map("reorder_level") @db.Decimal(14, 3)
   priceOverride Decimal? @map("price_override") @db.Decimal(14, 2)
+  /// This store sells this product (shown on its POS, menu and product list). Turning it off keeps the stock.
+  isListed      Boolean  @default(true) @map("is_listed")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -263,6 +266,7 @@ model Inventory {
 
   @@unique([storeId, productId])
   @@index([productId])
+  @@index([storeId, isListed])
   @@map("inventory")
 }
 

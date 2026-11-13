@@ -9,6 +9,7 @@
     "dev": "nest start --watch",
     "test": "jest",
     "test:smoke": "node test/smoke.mjs",
+    "test:stores": "node test/stores.mjs",
     "load": "node scripts/load.mjs",
     "chaos": "node scripts/chaos.mjs",
     "postinstall": "prisma generate",

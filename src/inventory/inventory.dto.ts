@@ -13,6 +13,10 @@ export class InventoryQueryDto extends PageQueryDto {
   /** Only items at or below their reorder level */
   @IsOptional() @Transform(({ value }) => value === 'true' || value === true) @IsBoolean()
   lowStock?: boolean;
+
+  /** Also products this store does not sell (normally hidden) */
+  @IsOptional() @Transform(({ value }) => value === 'true' || value === true) @IsBoolean()
+  includeUnlisted?: boolean;
 }
 
 export class UpdateInventoryDto {
@@ -22,6 +26,10 @@ export class UpdateInventoryDto {
   /** Store-specific selling price. Send null to use the product's default price. */
   @IsOptional() @ValidateIf((_, v) => v !== null) @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0)
   priceOverride?: number | null;
+
+  /** The store sells this product. false = hidden from its POS, menu and product list (the stock is kept). */
+  @IsOptional() @IsBoolean()
+  isListed?: boolean;
 }
 
 export class AdjustItemDto {

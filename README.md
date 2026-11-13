@@ -112,12 +112,32 @@ npm run db:reset
 npm run test:smoke
 ```
 
+```bash
+npm run test:stores
+```
+
 `npm test` runs the unit tests (prices, promotions, coupons, recipes, riel rounding, KHQR, logging and privacy,
 monitoring, fault injection). `npm run test:smoke` is the end-to-end test of the whole API (about 300 checks); it
-needs the API running on fresh demo data (`npm run db:reset`). The browser tests are in pos-frontend
+needs the API running on fresh demo data (`npm run db:reset`), and so does `npm run test:stores` (products per
+store). The browser tests are in pos-frontend
 (`npm run test:monitor` there checks the System monitor page).
 
 The anomaly detector's tests are in the ml-detector repository.
+
+## Products per store
+
+There is one product list for all stores, and each store sells only its own products. Per store
+(`PUT /inventory/{storeId}/{productId}`, super admin or that store's manager):
+
+- `isListed`: the store sells the product. Off = not on its POS, menu, product list or stock page; a new sale is
+  refused (a sale already made offline is still accepted). The stock is kept.
+- `priceOverride`: the store's own price; empty = the product's selling price.
+
+A new product is sold in the stores given in `stores` (`[{ "storeId", "price" }]`), or in every store when it is
+left out (as before, so integrations keep working). A new store sells every active product, or the same products
+and prices as another store (`copyProductsFrom`). `GET /products?storeId=…&listing=listed|unlisted` lists what a
+store sells or does not sell. Receiving or transferring stock of a product into a store that has never had it
+also lists it there.
 
 ## Rules shared with the frontend
 
@@ -151,7 +171,7 @@ same strings as the SDK's own test cases.
 | Role | Can do |
 |---|---|
 | **SUPER_ADMIN** | Everything in every store: stores, products, prices, users, API keys, webhooks |
-| **STORE_MANAGER** | In their stores: stock, transfers, refunds, reports, store prices, manage cashiers |
+| **STORE_MANAGER** | In their stores: which products the store sells, store prices, stock, transfers, refunds, reports, manage cashiers |
 | **CASHIER** | In their stores: sell, open and close their own shift, look up products and customers |
 
 Every request is checked against the stores the user is assigned to. A cashier in PP01 cannot read or sell in SR01.

@@ -346,7 +346,7 @@ export class SalesService {
     const productIds = [...new Set(dto.items.map((i) => i.productId))];
     const products = await this.prisma.product.findMany({
       where: { id: { in: productIds } },
-      include: { inventory: { where: { storeId: dto.storeId }, select: { priceOverride: true } } },
+      include: { inventory: { where: { storeId: dto.storeId }, select: { priceOverride: true, isListed: true } } },
     });
     const byId = new Map(products.map((x) => [x.id, x]));
     for (const id of productIds) {
@@ -354,6 +354,8 @@ export class SalesService {
       if (!prod) throw new BadRequestException(`Product ${id} not found`);
       if (!prod.isActive || prod.isIngredient) throw new BadRequestException(`Product ${prod.name} is not for sale`);
       if (opts.online && !prod.onlineAvailable) throw new BadRequestException(`${prod.name} cannot be ordered online`);
+      // A sale made offline has already happened at the till: keep it even if the store stopped selling the product since.
+      if (!offlineAt && !prod.inventory[0]?.isListed) throw new BadRequestException(`${prod.name} is not sold in this store`);
     }
 
     // Drink options: check them against the product's option groups and add their prices.
