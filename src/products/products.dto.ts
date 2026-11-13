@@ -1,9 +1,18 @@
-import { PartialType } from '@nestjs/swagger';
+import { OmitType, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUrl, IsUUID, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
 import { PageQueryDto } from '../common/pagination';
 
 const money = { maxDecimalPlaces: 2 };
+
+/** A store that sells the product, with its own price (empty = the product's selling price) */
+export class ProductStoreDto {
+  @IsUUID()
+  storeId: string;
+
+  @IsOptional() @ValidateIf((_, v) => v !== null) @Type(() => Number) @IsNumber(money) @Min(0)
+  price?: number | null;
+}
 
 export class CreateProductDto {
   @IsString() @MaxLength(50)
@@ -69,9 +78,13 @@ export class CreateProductDto {
   /** Drink options (Size, Sugar...) offered for this product, in order */
   @IsOptional() @IsArray() @IsUUID('all', { each: true })
   modifierGroupIds?: string[];
+
+  /** New products only: the stores that sell it (and their own price). Leave out = every store. */
+  @IsOptional() @IsArray() @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => ProductStoreDto)
+  stores?: ProductStoreDto[];
 }
 
-export class UpdateProductDto extends PartialType(CreateProductDto) {
+export class UpdateProductDto extends PartialType(OmitType(CreateProductDto, ['stores'] as const)) {
   @IsOptional() @IsBoolean()
   isActive?: boolean;
 }
@@ -100,4 +113,8 @@ export class ProductQueryDto extends PageQueryDto {
   /** sellable = what the POS sells; ingredient = recipe ingredients and supplies */
   @IsOptional() @IsIn(['sellable', 'ingredient'])
   kind?: 'sellable' | 'ingredient';
+
+  /** With storeId: listed = products this store sells, unlisted = products it does not sell, all (default) */
+  @IsOptional() @IsIn(['listed', 'unlisted', 'all'])
+  listing?: 'listed' | 'unlisted' | 'all';
 }

@@ -307,6 +307,12 @@ async function main() {
   };
   for (const [name, nameKm] of Object.entries(KHMER_CATEGORIES)) await prisma.category.updateMany({ where: { name, nameKm: null }, data: { nameKm } });
 
+  // Demo: every store sells every product (services like drinks have no stock row yet)
+  await prisma.$executeRaw`
+    INSERT INTO inventory (id, store_id, product_id, updated_at)
+    SELECT gen_random_uuid(), s.id, p.id, CURRENT_TIMESTAMP FROM stores s CROSS JOIN products p
+    ON CONFLICT (store_id, product_id) DO NOTHING`;
+
   console.log('Login: admin@pos.local / Password@123 (also manager.pp@, manager.sr@, cashier1@, cashier2@, cashier3@)');
   console.log('Manager approval PINs: manager.pp 2580, manager.sr 1397, admin 9024');
 }

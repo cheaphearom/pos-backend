@@ -22,6 +22,7 @@ export class InventoryService {
     assertStoreAccess(p, q.storeId);
     const where: Prisma.InventoryWhereInput = {
       storeId: q.storeId,
+      ...(!q.includeUnlisted && { isListed: true }),
       ...(q.lowStock && { quantity: { lte: this.prisma.inventory.fields.reorderLevel } }),
       ...(q.search && {
         product: {
@@ -45,12 +46,12 @@ export class InventoryService {
     return toPage(rows, total, q);
   }
 
-  /** Set reorder level / store price for a product in a store. */
+  /** Set whether the store sells a product, its reorder level and its own price. */
   async update(p: Principal, storeId: string, productId: string, dto: UpdateInventoryDto) {
     assertStoreAccess(p, storeId);
     return this.prisma.inventory.upsert({
       where: { storeId_productId: { storeId, productId } },
-      create: { storeId, productId, reorderLevel: dto.reorderLevel, priceOverride: dto.priceOverride },
+      create: { storeId, productId, reorderLevel: dto.reorderLevel, priceOverride: dto.priceOverride, isListed: dto.isListed ?? true },
       update: dto,
     });
   }

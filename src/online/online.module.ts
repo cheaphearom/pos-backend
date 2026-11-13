@@ -92,7 +92,7 @@ export class OnlineOrdersService {
   async menu(code: string) {
     const store = await this.storeByCode(code);
     const products = await this.prisma.product.findMany({
-      where: { isActive: true, isIngredient: false, onlineAvailable: true },
+      where: { isActive: true, isIngredient: false, onlineAvailable: true, inventory: { some: { storeId: store.id, isListed: true } } },
       select: {
         id: true, name: true, nameKm: true, description: true, imageUrl: true, sellPrice: true, unit: true, categoryId: true,
         inventory: { where: { storeId: store.id }, select: { priceOverride: true, quantity: true } }, trackStock: true,

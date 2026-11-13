@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { pageArgs, toPage } from '../common/pagination';
 import { assertStoreAccess, Principal } from '../common/principal';
@@ -15,6 +15,8 @@ export class ProductsService {
       categoryId: q.categoryId,
       ...(!q.includeInactive && { isActive: true }),
       ...(q.kind && { isIngredient: q.kind === 'ingredient' }),
+      ...(q.storeId && q.listing === 'listed' && { inventory: { some: { storeId: q.storeId, isListed: true } } }),
+      ...(q.storeId && q.listing === 'unlisted' && { NOT: { inventory: { some: { storeId: q.storeId, isListed: true } } } }),
       ...(q.search && {
         OR: [
           { name: { contains: q.search, mode: 'insensitive' } },
@@ -55,9 +57,9 @@ export class ProductsService {
   }
 
   /**
-   * Compact list of every active product with this store's price and stock, for the POS
+   * Compact list of every active product this store sells, with its price and stock, for the POS
    * to keep offline. With `since`, only products whose data changed after that time
-   * (including deactivated ones, so the POS can remove them).
+   * (including deactivated or no longer sold ones, so the POS can remove them).
    */
   async catalog(p: Principal, storeId: string, since?: string) {
     assertStoreAccess(p, storeId);
@@ -67,11 +69,11 @@ export class ProductsService {
     const rows = await this.prisma.product.findMany({
       where: sinceDate
         ? { OR: [{ updatedAt: { gt: sinceDate } }, { inventory: { some: { storeId, updatedAt: { gt: sinceDate } } } }] }
-        : { isActive: true, isIngredient: false },
+        : { isActive: true, isIngredient: false, inventory: { some: { storeId, isListed: true } } },
       select: {
         id: true, sku: true, barcode: true, name: true, nameKm: true, unit: true, sellPrice: true, taxable: true,
         trackStock: true, isActive: true, categoryId: true, imageUrl: true, isIngredient: true,
-        inventory: { where: { storeId }, select: { quantity: true, priceOverride: true } },
+        inventory: { where: { storeId }, select: { quantity: true, priceOverride: true, isListed: true } },
         modifierGroups: { orderBy: { sortOrder: 'asc' }, select: { groupId: true } },
       },
       orderBy: { name: 'asc' },
@@ -81,7 +83,8 @@ export class ProductsService {
       full: !sinceDate,
       products: rows.map(({ inventory, sellPrice, modifierGroups, isIngredient, ...r }) => ({
         ...r,
-        isActive: r.isActive && !isIngredient, // ingredients are never sold at the POS
+        // ingredients are never sold at the POS, nor products this store does not sell
+        isActive: r.isActive && !isIngredient && !!inventory[0]?.isListed,
         modifierGroupIds: modifierGroups.map((m) => m.groupId),
         price: inventory[0]?.priceOverride ?? sellPrice,
         stock: inventory[0]?.quantity ?? '0',
@@ -97,13 +100,27 @@ export class ProductsService {
       include: { inventory: { where: { storeId } } },
     });
     if (!product) throw new NotFoundException(`No product with barcode or SKU "${code}"`);
+    if (!product.inventory[0]?.isListed) throw new NotFoundException(`${product.name} is not sold in this store`);
     return withStorePrice(product, storeId);
   }
 
-  create({ modifierGroupIds, ...dto }: CreateProductDto) {
+  /** A new product is sold in the chosen stores (with their own price), or in every store when none are given. */
+  async create({ modifierGroupIds, stores, ...dto }: CreateProductDto) {
+    const listing = stores ?? (await this.allStores()).map((storeId) => ({ storeId, price: null }));
+    const known = new Set(await this.allStores());
+    const unknown = listing.find((s) => !known.has(s.storeId));
+    if (unknown) throw new BadRequestException(`Store ${unknown.storeId} not found`);
     return this.prisma.product.create({
-      data: { ...dto, ...(modifierGroupIds && { modifierGroups: { create: modifierGroupIds.map((groupId, i) => ({ groupId, sortOrder: i })) } }) },
+      data: {
+        ...dto,
+        ...(modifierGroupIds && { modifierGroups: { create: modifierGroupIds.map((groupId, i) => ({ groupId, sortOrder: i })) } }),
+        inventory: { create: listing.map((s) => ({ storeId: s.storeId, priceOverride: s.price ?? null, isListed: true })) },
+      },
     });
+  }
+
+  private async allStores() {
+    return (await this.prisma.store.findMany({ select: { id: true } })).map((s) => s.id);
   }
 
   update(id: string, { modifierGroupIds, ...dto }: UpdateProductDto) {
@@ -119,9 +136,16 @@ export class ProductsService {
 
   /** Create or update many products by SKU in one transaction (for imports and integrations). */
   async bulkUpsert(products: CreateProductDto[]) {
+    const storeIds = await this.allStores();
     const results = await this.prisma.$transaction(
-      products.map(({ modifierGroupIds: _ignored, ...dto }) =>
-        this.prisma.product.upsert({ where: { sku: dto.sku }, create: dto, update: dto, select: { id: true, sku: true } }),
+      products.map(({ modifierGroupIds: _ignored, stores, ...dto }) =>
+        this.prisma.product.upsert({
+          where: { sku: dto.sku },
+          // New products: sold in the given stores, or in every store
+          create: { ...dto, inventory: { create: (stores ?? storeIds.map((storeId) => ({ storeId, price: null }))).filter((s) => storeIds.includes(s.storeId)).map((s) => ({ storeId: s.storeId, priceOverride: s.price ?? null })) } },
+          update: dto,
+          select: { id: true, sku: true },
+        }),
       ),
     );
     return { count: results.length, products: results };
@@ -129,7 +153,7 @@ export class ProductsService {
 }
 
 /** Adds `price` (store override or default) and `stock` when a store is given. */
-function withStorePrice<T extends { sellPrice: Prisma.Decimal; inventory?: { storeId: string; quantity: Prisma.Decimal; priceOverride: Prisma.Decimal | null }[] }>(
+function withStorePrice<T extends { sellPrice: Prisma.Decimal; inventory?: { storeId: string; quantity: Prisma.Decimal; priceOverride: Prisma.Decimal | null; isListed: boolean }[] }>(
   product: T,
   storeId?: string,
 ) {
@@ -141,5 +165,7 @@ function withStorePrice<T extends { sellPrice: Prisma.Decimal; inventory?: { sto
     inventory,
     price: inv?.priceOverride ?? product.sellPrice,
     stock: inv?.quantity ?? new Prisma.Decimal(0),
+    /** this store sells the product */
+    listed: !!inv?.isListed,
   };
 }
