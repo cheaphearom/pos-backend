@@ -1,0 +1,17 @@
+# Add-on: the web app (pos-frontend) on the same server, served by nginx, which forwards /api, /docs and
+# /health to the api container. One address for everything: point the Cloudflare Tunnel at web:80.
+#
+# Folders on the server, side by side:   ~/pos-backend   ~/pos-frontend   (git clone both)
+# Turn it on in deploy/.env:             COMPOSE_FILE=docker-compose.yml:docker-compose.web.yml
+#   (on Windows, use ; instead of :)     then: docker compose up -d --build
+services:
+  web:
+    build:
+      # pos-frontend, cloned next to pos-backend (relative to this deploy/ folder)
+      context: ${FRONTEND_DIR:-../../pos-frontend}
+    restart: unless-stopped
+    depends_on:
+      - api
+    # Only reachable from this computer (for checking); the public way in is the tunnel.
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8088}:80"

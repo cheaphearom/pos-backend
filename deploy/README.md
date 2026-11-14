@@ -85,6 +85,47 @@ Create your stores (Stores page: tax, riel rate, café mode, KHQR account…), u
 
 Check the server alone, without Cloudflare: `curl http://127.0.0.1:3000/health` on the server.
 
+## Web app on the same server (optional)
+
+Instead of Vercel or Cloudflare Workers, this server can also serve the web app: one more container, `web` (nginx),
+serves the built **pos-frontend** and forwards `/api`, `/docs` and `/health` to `api`. One address for everything,
+and no `API_ORIGIN` to keep up to date.
+
+```
+ phones / tills / admin ──HTTPS──► Cloudflare tunnel ──► web (nginx: the app) ──/api──► api ──► postgres, redis
+```
+
+1. Clone **pos-frontend** next to pos-backend on the server (`~/pos-backend` and `~/pos-frontend`):
+
+```bash
+cd ~ && git clone https://github.com/cheaphearom/pos-frontend.git
+```
+
+2. In `deploy/.env`, turn on the add-on (on Windows, separate the files with `;` instead of `:`):
+
+```
+COMPOSE_FILE=docker-compose.yml:docker-compose.web.yml
+```
+
+   With the ML monitoring add-on too: `COMPOSE_FILE=docker-compose.yml:docker-compose.web.yml:docker-compose.monitoring.yml`.
+
+3. Point the tunnel at the web app instead of the API: in Cloudflare (Zero Trust → Networks → Tunnels → your tunnel →
+   Public Hostname), change the service from `http://api:3000` to **`http://web:80`**. With a quick tunnel, start it
+   with `--url http://web:80`.
+
+4. Build and start:
+
+```bash
+cd ~/pos-backend/deploy && docker compose up -d --build
+```
+
+5. Check: `curl http://127.0.0.1:8088/health` on the server (the web app answers on `127.0.0.1:8088` for checking;
+   `WEB_PORT` changes it), then your address in a browser.
+
+`TRUST_PROXY=2` (the tunnel and nginx) keeps the customer's address for login limits and the audit log.
+
+**Updating the web app:** `cd ~/pos-frontend && git pull`, then `cd ~/pos-backend/deploy && docker compose up -d --build`.
+
 ## Logs, Loki and the ML anomaly detector (optional)
 
 The API writes JSON logs to `deploy/logs` (rotated daily or at 100 MB, 14 old files kept). The monitoring add-on
@@ -150,7 +191,8 @@ cd ~/pos-backend && git pull
 cd deploy && docker compose up -d --build
 ```
 
-Database changes are applied automatically when the API starts.
+Database changes are applied automatically when the API starts. With the web app on this server, also run
+`git pull` in `~/pos-frontend` first.
 
 ## Backups
 
