@@ -1,4 +1,4 @@
-import { IsObject, IsOptional, IsString, Matches, MaxLength, ValidateIf } from 'class-validator';
+import { IsObject, IsUrl, IsOptional, IsString, Matches, MaxLength, ValidateIf } from 'class-validator';
 
 /**
  * Sync a store's menu from the BROWN system.
@@ -6,6 +6,14 @@ import { IsObject, IsOptional, IsString, Matches, MaxLength, ValidateIf } from '
  * pasted from Postman (when the POS server cannot reach the BROWN API).
  */
 export class BrownSyncDto {
+  /** BROWN menu API address. Empty = BROWN_MENU_API_URL (default https://dev.brown.com.kh/Client_API/V7/item_menu/) */
+  @IsOptional() @ValidateIf((_, v) => v !== '') @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_tld: false }, { message: 'API URL must start with http:// or https://' }) @MaxLength(300)
+  apiUrl?: string;
+
+  /** BROWN app username: only for the brown_app_menu_listing API */
+  @IsOptional() @IsString() @MaxLength(100)
+  username?: string;
+
   /** The store's id in BROWN (idoutlet). Saved on the store; defaults to the one already saved. */
   @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{1,50}$/, { message: 'BROWN store id: letters and digits only' })
   brownStoreId?: string;
