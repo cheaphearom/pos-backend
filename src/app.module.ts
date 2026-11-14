@@ -4,6 +4,7 @@ import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './auth/auth.module';
+import { BrownModule } from './brown/brown.module';
 import { CategoriesModule } from './categories/categories.module';
 import { AuthGuard } from './common/auth.guard';
 import { ClientThrottlerGuard } from './common/throttler.guard';
@@ -50,6 +51,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     AuthModule,
     UsersModule,
     StoresModule,
+    BrownModule,
     CategoriesModule,
     ProductsModule,
     InventoryModule,

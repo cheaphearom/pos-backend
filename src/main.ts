@@ -20,6 +20,8 @@ async function bootstrap() {
   // Behind Cloudflare + nginx: take the customer's real IP from X-Forwarded-For (rate limits, audit log).
   // TRUST_PROXY = number of proxies in front of the API (2 = Cloudflare Tunnel + nginx).
   if (process.env.TRUST_PROXY) app.set('trust proxy', /^\d+$/.test(process.env.TRUST_PROXY) ? Number(process.env.TRUST_PROXY) : process.env.TRUST_PROXY);
+  // 2 MB: a pasted BROWN menu (Stores > Sync BROWN menu) or a big products/bulk import is larger than the 100 KB default.
+  app.useBodyParser('json', { limit: '2mb' });
   app.setGlobalPrefix('api/v1', { exclude: ['health'] });
   app.use(accessLog); // one event=http_request line per request, X-Request-Id
   app.use(helmet());

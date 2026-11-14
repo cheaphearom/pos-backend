@@ -16,6 +16,10 @@ export class CreateStoreDto {
   @IsOptional() @IsString() @MaxLength(30)
   phone?: string;
 
+  /** This store's id in the BROWN system (idoutlet), e.g. 820161780837506397. Used by the menu sync. */
+  @IsOptional() @ValidateIf((_, v) => v !== null && v !== '') @IsString() @MaxLength(50)
+  externalId?: string | null;
+
   /** ISO currency code */
   @IsOptional() @IsString() @Length(3, 3)
   currency?: string;
