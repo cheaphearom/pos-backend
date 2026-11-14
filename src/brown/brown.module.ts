@@ -1,4 +1,4 @@
-import { Body, Controller, Module, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Module, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { AuditService } from '../audit/audit.module';
@@ -16,6 +16,13 @@ export class BrownController {
     private readonly audit: AuditService,
   ) {}
 
+  /** The default BROWN API address (shown in the Sync dialog). */
+  @Roles(Role.SUPER_ADMIN)
+  @Get('brown-sync/settings')
+  settings() {
+    return this.brown.settings();
+  }
+
   /** Sync this store's menu from the BROWN system: new items are created, existing ones (same SKU) updated. */
   @Roles(Role.SUPER_ADMIN)
   @Post(':id/brown-sync')
@@ -24,7 +31,7 @@ export class BrownController {
     this.audit.add(p, {
       action: 'BROWN_MENU_SYNCED', storeId: id, entityType: 'store', entityId: r.store,
       summary: `BROWN menu synced for ${r.store}: ${r.items} items (${r.productsCreated} new, ${r.productsUpdated} updated)`,
-      details: { ...r, source: dto.response ? 'pasted' : 'api' },
+      details: { ...r, source: dto.response ? 'pasted' : 'api', ...(!dto.response && { apiUrl: dto.apiUrl || 'default' }) },
     });
     return r;
   }

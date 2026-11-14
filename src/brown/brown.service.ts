@@ -85,22 +85,29 @@ export class BrownService {
   private readonly log = new Logger('BrownSync');
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Calls the BROWN item_menu API for one BROWN store. */
-  async fetchMenu(brownStoreId: string, devKid: string, accessToken: string, dataEncryption?: string): Promise<unknown> {
-    const body = {
-      dev_kid: devKid,
-      function: 'list_item_menu',
-      datas: {
-        store_id: brownStoreId,
-        menu_id: '',
-        action: 'list_item_menu',
-        access_token: accessToken,
-        data_encryption: dataEncryption || brownDataEnc(accessToken, devKid),
-      },
-    };
+  /** The address used when the Sync dialog leaves API URL empty. */
+  settings() {
+    return { menuUrl: brownConfig.menuUrl };
+  }
+
+  /**
+   * Calls a BROWN menu API for one BROWN store. Two request formats:
+   *  - .../brown_app_menu_listing/ (app API): flat fields
+   *  - anything else (Client_API .../item_menu/): { dev_kid, function, datas: { ... } }
+   */
+  async fetchMenu(brownStoreId: string, devKid: string, accessToken: string, dataEncryption?: string, apiUrl?: string, username?: string): Promise<unknown> {
+    const url = this.checkUrl(apiUrl || brownConfig.menuUrl);
+    const dataEnc = dataEncryption || brownDataEnc(accessToken, devKid);
+    const body = /brown_app_menu_listing/i.test(url.pathname)
+      ? { dev_kid: devKid, username: username ?? '', data_enc: dataEnc, user_access_token: accessToken, action: 'list_item_menu', store_id: brownStoreId, service_type: '' }
+      : {
+          dev_kid: devKid,
+          function: 'list_item_menu',
+          datas: { store_id: brownStoreId, menu_id: '', action: 'list_item_menu', access_token: accessToken, data_encryption: dataEnc },
+        };
     let res: Response;
     try {
-      res = await fetch(brownConfig.menuUrl, {
+      res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify(body),
@@ -108,7 +115,7 @@ export class BrownService {
       });
     } catch (e) {
       const why = (e as Error).name === 'TimeoutError' ? 'no answer in time' : ((e as any).cause?.code ?? (e as Error).message);
-      throw new BadGatewayException(`Cannot reach the BROWN API (${new URL(brownConfig.menuUrl).host}): ${why}`);
+      throw new BadGatewayException(`Cannot reach the BROWN API (${url.host}): ${why}`);
     }
     const text = await res.text();
     try {
@@ -116,6 +123,28 @@ export class BrownService {
     } catch {
       throw new BadGatewayException(`The BROWN API answered ${res.status} but not with JSON: ${text.slice(0, 160)}`);
     }
+  }
+
+  /**
+   * The API URL comes from an admin, but the POS server sends the request, so it must not point at the
+   * POS itself or its own containers (database, Redis...). Office addresses such as 192.168.x.x are allowed.
+   */
+  private checkUrl(raw: string): URL {
+    let url: URL;
+    try {
+      url = new URL(raw);
+    } catch {
+      throw new BadRequestException('API URL is not a valid address');
+    }
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    const blocked =
+      !['http:', 'https:'].includes(url.protocol) ||
+      ['localhost', 'api', 'web', 'postgres', 'redis', 'cloudflared', 'quicktunnel', 'loki', 'grafana', 'ml-detector', 'metadata.google.internal'].includes(host) ||
+      host.endsWith('.localhost') ||
+      /^(127\.|0\.|169\.254\.)/.test(host) ||
+      host === '::1' || host === '0.0.0.0';
+    if (blocked) throw new BadRequestException(`API URL cannot point at ${host}: use the BROWN server's address`);
+    return url;
   }
 
   /** Adds new items, updates existing ones (same SKU), and lists all of them in the store. */
@@ -130,7 +159,7 @@ export class BrownService {
     let response: unknown = dto.response;
     if (!response) {
       if (!brownStoreId) throw new BadRequestException('Enter the BROWN store id');
-      response = await this.fetchMenu(brownStoreId, dto.devKid!, dto.accessToken!, dto.dataEncryption);
+      response = await this.fetchMenu(brownStoreId, dto.devKid!, dto.accessToken!, dto.dataEncryption, dto.apiUrl?.trim(), dto.username?.trim());
     }
     const items = parseBrownMenu(response);
     if (!items.length) throw new BadGatewayException('The BROWN menu has no items for this store');
