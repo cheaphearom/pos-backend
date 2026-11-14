@@ -79,3 +79,12 @@ export const chaosConfig = { enabled: process.env.CHAOS_ENABLED === 'true' };
 if (chaosConfig.enabled && config.nodeEnv === 'production') {
   throw new Error('CHAOS_ENABLED=true is not allowed in production (NODE_ENV=production): fault injection is for testing only');
 }
+
+/**
+ * BROWN menu sync (Stores page > Sync BROWN menu).
+ * The POS server calls this address, so it must be reachable from the server.
+ */
+export const brownConfig = {
+  menuUrl: process.env.BROWN_MENU_API_URL ?? 'https://dev.brown.com.kh/Client_API/V7/item_menu/',
+  timeoutMs: num(process.env.BROWN_TIMEOUT_MS, 30_000),
+};

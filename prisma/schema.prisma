@@ -86,6 +86,8 @@ model Store {
   taxRate    Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 4) // 0.1000 = 10%
   receiptSeq Int      @default(0) @map("receipt_seq") // last used receipt number
   isActive   Boolean  @default(true) @map("is_active")
+  /// This store's id in the BROWN system (idoutlet), used to sync its menu
+  externalId String?  @unique @map("external_id") @db.VarChar(50)
 
   // KHQR (Bakong) settings. Without an account id, KHQR codes cannot be generated for this store.
   khqrAccountId    String? @map("khqr_account_id") @db.VarChar(32) // e.g. myshop@aclb
