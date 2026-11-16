@@ -170,7 +170,12 @@ export interface BrownSyncAllJob {
 }
 
 /** What a "sync all stores" run needs (the same for every store) */
-export interface BrownSyncAllInput { devKid: string; accessToken: string; dataEncryption?: string; apiUrl?: string; username?: string }
+export interface BrownSyncAllInput { devKid: string; accessToken: string; dataEncryption?: string; apiUrl?: string; username?: string; groupIds?: string }
+
+/** "420160070859702031, 620160270825902196" -> the BROWN group ids to ask for (empty = all, group_id "") */
+export function brownGroupIds(v?: string): string[] {
+  return [...new Set((v ?? '').split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean))];
+}
 
 @Injectable()
 export class BrownService {
@@ -185,25 +190,53 @@ export class BrownService {
   }
 
   /**
-   * Calls a BROWN menu API for one BROWN store. Request formats:
-   *  - .../brown_pos_menu_listing/ (POS API, full menu with sizes, options, add-ons): flat fields, action list_item_menu_full
-   *  - .../brown_app_menu_listing/ (app API): flat fields, action list_item_menu
-   *  - anything else (Client_API .../item_menu/): { dev_kid, function, datas: { ... } }
+   * Calls a BROWN menu API for one BROWN store, once per BROWN group id (or once with group_id "" when none are given),
+   * and joins the groups of all answers into one menu.
    */
-  async fetchMenu(brownStoreId: string, devKid: string, accessToken: string, dataEncryption?: string, apiUrl?: string, username?: string): Promise<unknown> {
+  async fetchMenu(brownStoreId: string, devKid: string, accessToken: string, dataEncryption?: string, apiUrl?: string, username?: string, groupIds: string[] = []): Promise<unknown> {
+    const ids = groupIds.length ? groupIds : [''];
+    if (ids.length === 1) return this.fetchMenuPart(brownStoreId, devKid, accessToken, dataEncryption, apiUrl, username, ids[0]);
+    const groups: unknown[] = [];
+    for (const gid of ids) {
+      const part = await this.fetchMenuPart(brownStoreId, devKid, accessToken, dataEncryption, apiUrl, username, gid);
+      const g = findGroups(part);
+      if (!g) {
+        parseBrownMenu(part); // throws the BROWN error message
+      }
+      groups.push(...(g ?? []));
+    }
+    return { code: 100, result: { groups } };
+  }
+
+  /**
+   * One BROWN menu request. Request bodies, by address:
+   *  - Client_API .../brown_pos_menu_listing/ (POS menu with sizes, options, add-ons; the default):
+   *      { dev_kid, function: list_item_menu_full, datas: { data_encryption, access_token, action, group_id, store_id, service_type: pickup } }
+   *  - API_V16 .../brown_pos_menu_listing/ or .../brown_app_menu_listing/ (flat fields with username)
+   *  - Client_API .../item_menu/ (older): { dev_kid, function: list_item_menu, datas: { store_id, menu_id, action, access_token, data_encryption } }
+   */
+  private async fetchMenuPart(brownStoreId: string, devKid: string, accessToken: string, dataEncryption: string | undefined, apiUrl: string | undefined, username: string | undefined, groupId: string): Promise<unknown> {
     const url = this.checkUrl(apiUrl || brownConfig.menuUrl);
     const dataEnc = dataEncryption || brownDataEnc(accessToken, devKid);
     const posApi = /brown_pos_menu_listing/i.test(url.pathname);
-    const body = posApi || /_menu_listing/i.test(url.pathname)
+    const action = posApi ? 'list_item_menu_full' : 'list_item_menu';
+    const flat = /_menu_listing/i.test(url.pathname) && !/client_api/i.test(url.pathname);
+    const body = flat
       ? {
           dev_kid: devKid, username: username ?? '', data_enc: dataEnc, user_access_token: accessToken,
-          action: posApi ? 'list_item_menu_full' : 'list_item_menu', store_id: brownStoreId, service_type: posApi ? 'pickup' : '',
+          action, store_id: brownStoreId, service_type: posApi ? 'pickup' : '', ...(posApi && { group_id: groupId }),
         }
-      : {
-          dev_kid: devKid,
-          function: 'list_item_menu',
-          datas: { store_id: brownStoreId, menu_id: '', action: 'list_item_menu', access_token: accessToken, data_encryption: dataEnc },
-        };
+      : posApi
+        ? {
+            dev_kid: devKid,
+            function: action,
+            datas: { data_encryption: dataEnc, access_token: accessToken, action, group_id: groupId, store_id: brownStoreId, service_type: 'pickup' },
+          }
+        : {
+            dev_kid: devKid,
+            function: action,
+            datas: { store_id: brownStoreId, menu_id: '', action, access_token: accessToken, data_encryption: dataEnc },
+          };
     let res: Response;
     try {
       res = await fetch(url, {
@@ -258,7 +291,7 @@ export class BrownService {
     let response: unknown = dto.response;
     if (!response) {
       if (!brownStoreId) throw new BadRequestException('Enter the BROWN store id');
-      response = await this.fetchMenu(brownStoreId, dto.devKid!, dto.accessToken!, dto.dataEncryption, dto.apiUrl?.trim(), dto.username?.trim());
+      response = await this.fetchMenu(brownStoreId, dto.devKid!, dto.accessToken!, dto.dataEncryption, dto.apiUrl?.trim(), dto.username?.trim(), brownGroupIds(dto.groupIds));
     }
     const items = parseBrownMenu(response);
     if (!items.length) throw new BadGatewayException('The BROWN menu has no items for this store');
@@ -463,7 +496,7 @@ export class BrownService {
           let failedInARow = 0;
           for (const s of stores) {
             try {
-              const r = await this.sync(s.id, { devKid: input.devKid, accessToken: input.accessToken, dataEncryption, apiUrl: input.apiUrl, username: input.username });
+              const r = await this.sync(s.id, { devKid: input.devKid, accessToken: input.accessToken, dataEncryption, apiUrl: input.apiUrl, username: input.username, groupIds: input.groupIds });
               job.results.push({ store: s.code, name: s.name, ok: true, items: r.items, productsCreated: r.productsCreated, productsUpdated: r.productsUpdated, optionsUpdated: r.optionsUpdated });
               failedInARow = 0;
             } catch (e) {

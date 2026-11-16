@@ -10,6 +10,10 @@ export class BrownSyncDto {
   @IsOptional() @ValidateIf((_, v) => v !== '') @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_tld: false }, { message: 'API URL must start with http:// or https://' }) @MaxLength(300)
   apiUrl?: string;
 
+  /** BROWN group ids to sync, separated by commas (e.g. 420160070859702031 = Beverages). Empty = all groups. */
+  @IsOptional() @IsString() @Matches(/^[0-9A-Za-z_,;\s-]{0,500}$/, { message: 'BROWN group ids: numbers separated by commas' })
+  groupIds?: string;
+
   /** BROWN app username: only for the brown_app_menu_listing API */
   @IsOptional() @IsString() @MaxLength(100)
   username?: string;
@@ -36,6 +40,10 @@ export class BrownSyncDto {
 
 /** Sync every active store that has a BROWN store id, with the same BROWN login. */
 export class BrownSyncAllDto {
+  /** BROWN group ids to sync, separated by commas (e.g. 420160070859702031 = Beverages). Empty = all groups. */
+  @IsOptional() @IsString() @Matches(/^[0-9A-Za-z_,;\s-]{0,500}$/, { message: 'BROWN group ids: numbers separated by commas' })
+  groupIds?: string;
+
   @IsOptional() @ValidateIf((_, v) => v !== '') @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_tld: false }, { message: 'API URL must start with http:// or https://' }) @MaxLength(300)
   apiUrl?: string;
 
