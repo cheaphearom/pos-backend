@@ -77,17 +77,17 @@ enum WebhookDeliveryStatus {
 // ──────────────────────── Stores & Users ────────────────────────
 
 model Store {
-  id         String   @id @default(uuid()) @db.Uuid
-  code       String   @unique @db.VarChar(20) // short code used in receipt numbers, e.g. "PP01"
-  name       String   @db.VarChar(150)
+  id         String  @id @default(uuid()) @db.Uuid
+  code       String  @unique @db.VarChar(20) // short code used in receipt numbers, e.g. "PP01"
+  name       String  @db.VarChar(150)
   address    String?
-  phone      String?  @db.VarChar(30)
-  currency   String   @default("USD") @db.VarChar(3)
-  taxRate    Decimal  @default(0) @map("tax_rate") @db.Decimal(5, 4) // 0.1000 = 10%
-  receiptSeq Int      @default(0) @map("receipt_seq") // last used receipt number
-  isActive   Boolean  @default(true) @map("is_active")
+  phone      String? @db.VarChar(30)
+  currency   String  @default("USD") @db.VarChar(3)
+  taxRate    Decimal @default(0) @map("tax_rate") @db.Decimal(5, 4) // 0.1000 = 10%
+  receiptSeq Int     @default(0) @map("receipt_seq") // last used receipt number
+  isActive   Boolean @default(true) @map("is_active")
   /// This store's id in the BROWN system (idoutlet), used to sync its menu
-  externalId String?  @unique @map("external_id") @db.VarChar(50)
+  externalId String? @unique @map("external_id") @db.VarChar(50)
 
   // KHQR (Bakong) settings. Without an account id, KHQR codes cannot be generated for this store.
   khqrAccountId    String? @map("khqr_account_id") @db.VarChar(32) // e.g. myshop@aclb
@@ -97,35 +97,36 @@ model Store {
   khqrBank         String? @map("khqr_bank") @db.VarChar(32) // acquiring bank name
 
   /// Café mode: orders get a queue number and go to the barista / kitchen screen
-  hasKitchen Boolean @default(false) @map("has_kitchen")
+  hasKitchen     Boolean @default(false) @map("has_kitchen")
   /// Customers can order on their phone (pickup, or by scanning a table QR code)
   onlineOrdering Boolean @default(false) @map("online_ordering")
 
   /// Cashier controls: biggest manual discount a cashier may give without a manager PIN (% of the sale)
   cashierMaxDiscountPercent Decimal @default(10) @map("cashier_max_discount_percent") @db.Decimal(5, 2)
   /// Cashiers need a manager PIN to refund / to void a sale
-  refundNeedsApproval Boolean @default(true) @map("refund_needs_approval")
-  voidNeedsApproval   Boolean @default(true) @map("void_needs_approval")
+  refundNeedsApproval       Boolean @default(true) @map("refund_needs_approval")
+  voidNeedsApproval         Boolean @default(true) @map("void_needs_approval")
 
   /// Dual currency: riel per 1 USD (e.g. 4100). Empty = riel cash is off for this store.
-  khrRate Int? @map("khr_rate")
+  khrRate              Int?     @map("khr_rate")
   /// Cashiers need a manager PIN to take money out of the drawer (pay-out)
-  cashOutNeedsApproval Boolean @default(true) @map("cash_out_needs_approval")
+  cashOutNeedsApproval Boolean  @default(true) @map("cash_out_needs_approval")
   /// Last Z report number of this store
-  zSeq    Int  @default(0) @map("z_seq")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  zSeq                 Int      @default(0) @map("z_seq")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
 
-  users          StoreUser[]
-  inventory      Inventory[]
-  stockMovements StockMovement[]
-  sales          Sale[]
-  shifts         Shift[]
-  transfersOut   StockTransfer[] @relation("TransferFrom")
-  transfersIn    StockTransfer[] @relation("TransferTo")
-  apiKeys        ApiKey[]
-  purchaseOrders PurchaseOrder[]
-  khqrPayments   KhqrPayment[]
+  users             StoreUser[]
+  inventory         Inventory[]
+  productOptions    ProductOption[]
+  stockMovements    StockMovement[]
+  sales             Sale[]
+  shifts            Shift[]
+  transfersOut      StockTransfer[]   @relation("TransferFrom")
+  transfersIn       StockTransfer[]   @relation("TransferTo")
+  apiKeys           ApiKey[]
+  purchaseOrders    PurchaseOrder[]
+  khqrPayments      KhqrPayment[]
   productionBatches ProductionBatch[]
   wasteEntries      WasteEntry[]
 
@@ -133,18 +134,18 @@ model Store {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique @db.VarChar(150)
-  passwordHash String   @map("password_hash")
-  fullName     String   @map("full_name") @db.VarChar(150)
-  phone        String?  @db.VarChar(30)
-  role         Role     @default(CASHIER)
-  isActive     Boolean  @default(true) @map("is_active")
-  lastLoginAt  DateTime? @map("last_login_at")
+  id              String    @id @default(uuid()) @db.Uuid
+  email           String    @unique @db.VarChar(150)
+  passwordHash    String    @map("password_hash")
+  fullName        String    @map("full_name") @db.VarChar(150)
+  phone           String?   @db.VarChar(30)
+  role            Role      @default(CASHIER)
+  isActive        Boolean   @default(true) @map("is_active")
+  lastLoginAt     DateTime? @map("last_login_at")
   /// Managers: PIN typed on a cashier's POS to approve a big discount, refund or void
-  approvalPinHash String? @map("approval_pin_hash")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  approvalPinHash String?   @map("approval_pin_hash")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   stores        StoreUser[]
   refreshTokens RefreshToken[]
@@ -189,7 +190,7 @@ model Category {
   id        String   @id @default(uuid()) @db.Uuid
   name      String   @db.VarChar(100)
   /// Khmer name
-  nameKm    String?    @map("name_km") @db.VarChar(100)
+  nameKm    String?  @map("name_km") @db.VarChar(100)
   parentId  String?  @map("parent_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -204,44 +205,45 @@ model Category {
 
 /// One shared catalogue for all stores. Which stores sell a product, and their own price and stock, live in Inventory.
 model Product {
-  id          String   @id @default(uuid()) @db.Uuid
-  sku         String   @unique @db.VarChar(50)
-  barcode     String?  @unique @db.VarChar(64)
-  name        String   @db.VarChar(200)
+  id              String   @id @default(uuid()) @db.Uuid
+  sku             String   @unique @db.VarChar(50)
+  barcode         String?  @unique @db.VarChar(64)
+  name            String   @db.VarChar(200)
   /// Khmer name, shown when the screen is in Khmer
-  nameKm      String?  @map("name_km") @db.VarChar(200)
-  description String?
-  categoryId  String?  @map("category_id") @db.Uuid
-  unit        String   @default("pcs") @db.VarChar(20)
-  costPrice   Decimal  @default(0) @map("cost_price") @db.Decimal(14, 6) // per unit; ingredients can cost $0.0016 per ml
-  sellPrice   Decimal  @map("sell_price") @db.Decimal(14, 2)
-  taxable     Boolean  @default(true)
-  trackStock  Boolean  @default(true) @map("track_stock") // false for services
-  isActive    Boolean  @default(true) @map("is_active")
-  imageUrl    String?  @map("image_url")
+  nameKm          String?  @map("name_km") @db.VarChar(200)
+  description     String?
+  categoryId      String?  @map("category_id") @db.Uuid
+  unit            String   @default("pcs") @db.VarChar(20)
+  costPrice       Decimal  @default(0) @map("cost_price") @db.Decimal(14, 6) // per unit; ingredients can cost $0.0016 per ml
+  sellPrice       Decimal  @map("sell_price") @db.Decimal(14, 2)
+  taxable         Boolean  @default(true)
+  trackStock      Boolean  @default(true) @map("track_stock") // false for services
+  isActive        Boolean  @default(true) @map("is_active")
+  imageUrl        String?  @map("image_url")
   /// Ingredient / supply (beans, milk, cups): kept in stock, used by recipes, not sold at the POS
-  isIngredient Boolean @default(false) @map("is_ingredient")
+  isIngredient    Boolean  @default(false) @map("is_ingredient")
   /// Shown on the online ordering menu
-  onlineAvailable Boolean @default(false) @map("online_available")
+  onlineAvailable Boolean  @default(false) @map("online_available")
   /// Bakery / kitchen item made here in batches. Its recipe is for ONE batch and is used when the batch is made,
   /// not when it is sold (sales take finished pieces from stock).
-  madeInHouse    Boolean  @default(false) @map("made_in_house")
+  madeInHouse     Boolean  @default(false) @map("made_in_house")
   /// Pieces one recipe batch makes (e.g. 24 croissants)
-  batchYield     Decimal  @default(1) @map("batch_yield") @db.Decimal(10, 3)
+  batchYield      Decimal  @default(1) @map("batch_yield") @db.Decimal(10, 3)
   /// Fresh for this many hours after baking (unsold pieces after that are written off)
-  shelfLifeHours Int?     @map("shelf_life_hours")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  shelfLifeHours  Int?     @map("shelf_life_hours")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
-  category       Category?       @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  modifierGroups ProductModifierGroup[]
-  recipe         RecipeItem[]         @relation("RecipeOf")
-  usedIn         RecipeItem[]         @relation("RecipeIngredient")
-  inventory      Inventory[]
-  stockMovements StockMovement[]
-  saleItems      SaleItem[]
-  transferItems  StockTransferItem[]
-  poItems        PurchaseOrderItem[]
+  category          Category?              @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  modifierGroups    ProductModifierGroup[]
+  recipe            RecipeItem[]           @relation("RecipeOf")
+  usedIn            RecipeItem[]           @relation("RecipeIngredient")
+  inventory         Inventory[]
+  stockMovements    StockMovement[]
+  saleItems         SaleItem[]
+  productOptions    ProductOption[]
+  transferItems     StockTransferItem[]
+  poItems           PurchaseOrderItem[]
   productionBatches ProductionBatch[]
   wasteEntries      WasteEntry[]
 
@@ -295,16 +297,16 @@ model StockMovement {
 }
 
 model StockTransfer {
-  id          String         @id @default(uuid()) @db.Uuid
-  transferNo  String         @unique @map("transfer_no") @db.VarChar(40)
-  fromStoreId String         @map("from_store_id") @db.Uuid
-  toStoreId   String         @map("to_store_id") @db.Uuid
-  status      TransferStatus @default(IN_TRANSIT)
-  note        String?
-  createdById String?        @map("created_by_id") @db.Uuid
-  receivedById String?       @map("received_by_id") @db.Uuid
-  createdAt   DateTime       @default(now()) @map("created_at")
-  receivedAt  DateTime?      @map("received_at")
+  id           String         @id @default(uuid()) @db.Uuid
+  transferNo   String         @unique @map("transfer_no") @db.VarChar(40)
+  fromStoreId  String         @map("from_store_id") @db.Uuid
+  toStoreId    String         @map("to_store_id") @db.Uuid
+  status       TransferStatus @default(IN_TRANSIT)
+  note         String?
+  createdById  String?        @map("created_by_id") @db.Uuid
+  receivedById String?        @map("received_by_id") @db.Uuid
+  createdAt    DateTime       @default(now()) @map("created_at")
+  receivedAt   DateTime?      @map("received_at")
 
   fromStore Store               @relation("TransferFrom", fields: [fromStoreId], references: [id])
   toStore   Store               @relation("TransferTo", fields: [toStoreId], references: [id])
@@ -330,22 +332,22 @@ model StockTransferItem {
 // ─────────────────────── Customers & Loyalty ───────────────────────
 
 model Customer {
-  id          String   @id @default(uuid()) @db.Uuid
-  code        String   @unique @db.VarChar(30) // member card number
-  name        String   @db.VarChar(150)
-  phone       String?  @unique @db.VarChar(30)
-  email       String?  @db.VarChar(150)
-  points      Int      @default(0)
-  totalSpent  Decimal  @default(0) @map("total_spent") @db.Decimal(14, 2)
-  visitCount  Int      @default(0) @map("visit_count")
-  isActive    Boolean  @default(true) @map("is_active")
+  id              String    @id @default(uuid()) @db.Uuid
+  code            String    @unique @db.VarChar(30) // member card number
+  name            String    @db.VarChar(150)
+  phone           String?   @unique @db.VarChar(30)
+  email           String?   @db.VarChar(150)
+  points          Int       @default(0)
+  totalSpent      Decimal   @default(0) @map("total_spent") @db.Decimal(14, 2)
+  visitCount      Int       @default(0) @map("visit_count")
+  isActive        Boolean   @default(true) @map("is_active")
   /// First login in the member app
   appJoinedAt     DateTime? @map("app_joined_at")
   appLastSeenAt   DateTime? @map("app_last_seen_at")
   /// Raising this logs the member out of the app on every phone
   appTokenVersion Int       @default(0) @map("app_token_version")
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   sales        Sale[]
   onlineOrders OnlineOrder[]
@@ -390,9 +392,9 @@ model Shift {
   openedAt     DateTime    @default(now()) @map("opened_at")
   closedAt     DateTime?   @map("closed_at")
 
-  store Store  @relation(fields: [storeId], references: [id])
-  user  User   @relation(fields: [userId], references: [id])
-  sales Sale[]
+  store         Store          @relation(fields: [storeId], references: [id])
+  user          User           @relation(fields: [userId], references: [id])
+  sales         Sale[]
   cashMovements CashMovement[]
 
   @@index([storeId, openedAt])
@@ -401,46 +403,46 @@ model Shift {
 }
 
 model Sale {
-  id             String     @id @default(uuid()) @db.Uuid
-  receiptNo      String     @unique @map("receipt_no") @db.VarChar(40)
-  clientRef      String?    @unique @map("client_ref") @db.VarChar(64) // idempotency key (offline sync / integrations)
-  storeId        String     @map("store_id") @db.Uuid
-  shiftId        String?    @map("shift_id") @db.Uuid
-  cashierId      String?    @map("cashier_id") @db.Uuid // null when created by an integration
-  customerId     String?    @map("customer_id") @db.Uuid
-  channel        String     @default("POS") @db.VarChar(20) // POS, ONLINE, API...
-  orderType      OrderType  @default(RETAIL) @map("order_type")
-  tableNo        String?    @map("table_no") @db.VarChar(20)
-  queueNo        String?    @map("queue_no") @db.VarChar(10) // A001.. per store per day (café mode)
-  kitchenStatus  KitchenStatus @default(NONE) @map("kitchen_status")
-  kitchenStartedAt DateTime? @map("kitchen_started_at")
-  readyAt        DateTime?  @map("ready_at")
-  completedAt    DateTime?  @map("completed_at")
-  status         SaleStatus @default(COMPLETED)
-  subtotal       Decimal    @db.Decimal(14, 2) // before discounts & tax
-  discountTotal  Decimal    @default(0) @map("discount_total") @db.Decimal(14, 2)
-  taxTotal       Decimal    @default(0) @map("tax_total") @db.Decimal(14, 2)
-  total          Decimal    @db.Decimal(14, 2) // subtotal - discount + tax
-  pointsRedeemed Int        @default(0) @map("points_redeemed")
-  pointsDiscount Decimal    @default(0) @map("points_discount") @db.Decimal(14, 2)
-  amountDue      Decimal    @map("amount_due") @db.Decimal(14, 2) // total - pointsDiscount
-  amountPaid     Decimal    @map("amount_paid") @db.Decimal(14, 2)
-  changeDue      Decimal    @default(0) @map("change_due") @db.Decimal(14, 2)
+  id               String        @id @default(uuid()) @db.Uuid
+  receiptNo        String        @unique @map("receipt_no") @db.VarChar(40)
+  clientRef        String?       @unique @map("client_ref") @db.VarChar(64) // idempotency key (offline sync / integrations)
+  storeId          String        @map("store_id") @db.Uuid
+  shiftId          String?       @map("shift_id") @db.Uuid
+  cashierId        String?       @map("cashier_id") @db.Uuid // null when created by an integration
+  customerId       String?       @map("customer_id") @db.Uuid
+  channel          String        @default("POS") @db.VarChar(20) // POS, ONLINE, API...
+  orderType        OrderType     @default(RETAIL) @map("order_type")
+  tableNo          String?       @map("table_no") @db.VarChar(20)
+  queueNo          String?       @map("queue_no") @db.VarChar(10) // A001.. per store per day (café mode)
+  kitchenStatus    KitchenStatus @default(NONE) @map("kitchen_status")
+  kitchenStartedAt DateTime?     @map("kitchen_started_at")
+  readyAt          DateTime?     @map("ready_at")
+  completedAt      DateTime?     @map("completed_at")
+  status           SaleStatus    @default(COMPLETED)
+  subtotal         Decimal       @db.Decimal(14, 2) // before discounts & tax
+  discountTotal    Decimal       @default(0) @map("discount_total") @db.Decimal(14, 2)
+  taxTotal         Decimal       @default(0) @map("tax_total") @db.Decimal(14, 2)
+  total            Decimal       @db.Decimal(14, 2) // subtotal - discount + tax
+  pointsRedeemed   Int           @default(0) @map("points_redeemed")
+  pointsDiscount   Decimal       @default(0) @map("points_discount") @db.Decimal(14, 2)
+  amountDue        Decimal       @map("amount_due") @db.Decimal(14, 2) // total - pointsDiscount
+  amountPaid       Decimal       @map("amount_paid") @db.Decimal(14, 2)
+  changeDue        Decimal       @default(0) @map("change_due") @db.Decimal(14, 2)
   /// How the change was given: dollars + riel (riel rounded to 100)
-  changeUsd      Decimal    @default(0) @map("change_usd") @db.Decimal(14, 2)
-  changeKhr      Int        @default(0) @map("change_khr")
-  pointsEarned   Int        @default(0) @map("points_earned")
-  couponCodeId   String?    @map("coupon_code_id") @db.Uuid
-  couponDiscount Decimal    @default(0) @map("coupon_discount") @db.Decimal(14, 2)
-  couponName     String?    @map("coupon_name") @db.VarChar(100) // snapshot for the receipt
-  refundedTotal  Decimal    @default(0) @map("refunded_total") @db.Decimal(14, 2)
-  note           String?
-  createdAt      DateTime   @default(now()) @map("created_at")
+  changeUsd        Decimal       @default(0) @map("change_usd") @db.Decimal(14, 2)
+  changeKhr        Int           @default(0) @map("change_khr")
+  pointsEarned     Int           @default(0) @map("points_earned")
+  couponCodeId     String?       @map("coupon_code_id") @db.Uuid
+  couponDiscount   Decimal       @default(0) @map("coupon_discount") @db.Decimal(14, 2)
+  couponName       String?       @map("coupon_name") @db.VarChar(100) // snapshot for the receipt
+  refundedTotal    Decimal       @default(0) @map("refunded_total") @db.Decimal(14, 2)
+  note             String?
+  createdAt        DateTime      @default(now()) @map("created_at")
 
-  store    Store     @relation(fields: [storeId], references: [id])
-  shift    Shift?    @relation(fields: [shiftId], references: [id])
-  cashier  User?     @relation(fields: [cashierId], references: [id])
-  customer Customer? @relation(fields: [customerId], references: [id])
+  store    Store      @relation(fields: [storeId], references: [id])
+  shift    Shift?     @relation(fields: [shiftId], references: [id])
+  cashier  User?      @relation(fields: [cashierId], references: [id])
+  customer Customer?  @relation(fields: [customerId], references: [id])
   items    SaleItem[]
   payments Payment[]
   refunds  Refund[]
@@ -454,26 +456,26 @@ model Sale {
 }
 
 model SaleItem {
-  id           String  @id @default(uuid()) @db.Uuid
-  saleId       String  @map("sale_id") @db.Uuid
-  lineNo       Int     @map("line_no") // order on the receipt
-  productId    String  @map("product_id") @db.Uuid
-  sku          String  @db.VarChar(50) // snapshot at time of sale
-  name         String  @db.VarChar(200)
-  nameKm       String? @map("name_km") @db.VarChar(200) // Khmer name at the time of sale (receipts)
-  quantity     Decimal @db.Decimal(14, 3)
-  unitPrice    Decimal @map("unit_price") @db.Decimal(14, 2)
-  costPrice    Decimal @map("cost_price") @db.Decimal(14, 6) // per unit at the time of sale (recipe cost for drinks)
-  discount     Decimal @default(0) @db.Decimal(14, 2) // line + share of sale discount
-  taxRate      Decimal @map("tax_rate") @db.Decimal(5, 4)
-  netAmount    Decimal @map("net_amount") @db.Decimal(14, 2) // qty*price - discount
-  taxAmount    Decimal @map("tax_amount") @db.Decimal(14, 2)
-  lineTotal    Decimal @map("line_total") @db.Decimal(14, 2) // net + tax
-  refundedQty  Decimal @default(0) @map("refunded_qty") @db.Decimal(14, 3)
-  modifiers     Json?    // snapshot: [{ group, option, price }]
-  note          String?  @db.VarChar(200) // e.g. "less sweet", "hot please"
-  promotionId   String?  @map("promotion_id") @db.Uuid
-  promoDiscount Decimal  @default(0) @map("promo_discount") @db.Decimal(14, 2) // part of `discount` that came from the promotion
+  id            String  @id @default(uuid()) @db.Uuid
+  saleId        String  @map("sale_id") @db.Uuid
+  lineNo        Int     @map("line_no") // order on the receipt
+  productId     String  @map("product_id") @db.Uuid
+  sku           String  @db.VarChar(50) // snapshot at time of sale
+  name          String  @db.VarChar(200)
+  nameKm        String? @map("name_km") @db.VarChar(200) // Khmer name at the time of sale (receipts)
+  quantity      Decimal @db.Decimal(14, 3)
+  unitPrice     Decimal @map("unit_price") @db.Decimal(14, 2)
+  costPrice     Decimal @map("cost_price") @db.Decimal(14, 6) // per unit at the time of sale (recipe cost for drinks)
+  discount      Decimal @default(0) @db.Decimal(14, 2) // line + share of sale discount
+  taxRate       Decimal @map("tax_rate") @db.Decimal(5, 4)
+  netAmount     Decimal @map("net_amount") @db.Decimal(14, 2) // qty*price - discount
+  taxAmount     Decimal @map("tax_amount") @db.Decimal(14, 2)
+  lineTotal     Decimal @map("line_total") @db.Decimal(14, 2) // net + tax
+  refundedQty   Decimal @default(0) @map("refunded_qty") @db.Decimal(14, 3)
+  modifiers     Json? // snapshot: [{ group, option, price }]
+  note          String? @db.VarChar(200) // e.g. "less sweet", "hot please"
+  promotionId   String? @map("promotion_id") @db.Uuid
+  promoDiscount Decimal @default(0) @map("promo_discount") @db.Decimal(14, 2) // part of `discount` that came from the promotion
 
   sale        Sale         @relation(fields: [saleId], references: [id], onDelete: Cascade)
   promotion   Promotion?   @relation(fields: [promotionId], references: [id], onDelete: SetNull)
@@ -923,21 +925,21 @@ model VoucherBatch {
 }
 
 model Voucher {
-  id         String        @id @default(uuid()) @db.Uuid
-  batchId    String        @map("batch_id") @db.Uuid
-  code       String        @unique @db.VarChar(40)
-  value      Decimal       @db.Decimal(14, 2)
-  balance    Decimal       @db.Decimal(14, 2) // what is left to spend
-  status     VoucherStatus @default(INACTIVE)
-  expiresAt  DateTime?     @map("expires_at")
-  soldAt     DateTime?     @map("sold_at")
-  soldStoreId String?      @map("sold_store_id") @db.Uuid
-  soldMethod PaymentMethod? @map("sold_method")
-  soldShiftId String?      @map("sold_shift_id") @db.Uuid
-  soldById   String?       @map("sold_by_id") @db.Uuid
-  note       String?
-  createdAt  DateTime      @default(now()) @map("created_at")
-  updatedAt  DateTime      @updatedAt @map("updated_at")
+  id          String         @id @default(uuid()) @db.Uuid
+  batchId     String         @map("batch_id") @db.Uuid
+  code        String         @unique @db.VarChar(40)
+  value       Decimal        @db.Decimal(14, 2)
+  balance     Decimal        @db.Decimal(14, 2) // what is left to spend
+  status      VoucherStatus  @default(INACTIVE)
+  expiresAt   DateTime?      @map("expires_at")
+  soldAt      DateTime?      @map("sold_at")
+  soldStoreId String?        @map("sold_store_id") @db.Uuid
+  soldMethod  PaymentMethod? @map("sold_method")
+  soldShiftId String?        @map("sold_shift_id") @db.Uuid
+  soldById    String?        @map("sold_by_id") @db.Uuid
+  note        String?
+  createdAt   DateTime       @default(now()) @map("created_at")
+  updatedAt   DateTime       @updatedAt @map("updated_at")
 
   batch VoucherBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
   uses  VoucherUse[]
@@ -999,16 +1001,17 @@ model ModifierGroup {
 }
 
 model ModifierOption {
-  id         String   @id @default(uuid()) @db.Uuid
-  groupId    String   @map("group_id") @db.Uuid
-  name       String   @db.VarChar(60)
-  priceDelta Decimal  @default(0) @map("price_delta") @db.Decimal(14, 2) // added to the item price
-  isDefault  Boolean  @default(false) @map("is_default")
-  sortOrder  Int      @default(0) @map("sort_order")
-  isActive   Boolean  @default(true) @map("is_active")
+  id         String  @id @default(uuid()) @db.Uuid
+  groupId    String  @map("group_id") @db.Uuid
+  name       String  @db.VarChar(60)
+  priceDelta Decimal @default(0) @map("price_delta") @db.Decimal(14, 2) // added to the item price
+  isDefault  Boolean @default(false) @map("is_default")
+  sortOrder  Int     @default(0) @map("sort_order")
+  isActive   Boolean @default(true) @map("is_active")
 
-  group   ModifierGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  effects ModifierEffect[]
+  group          ModifierGroup    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  effects        ModifierEffect[]
+  productOptions ProductOption[]
 
   @@index([groupId])
   @@map("modifier_options")
@@ -1025,6 +1028,29 @@ model ProductModifierGroup {
   @@id([productId, groupId])
   @@index([groupId])
   @@map("product_modifier_groups")
+}
+
+/// The options one product offers in one store, with their own price (e.g. Americano: S +0.00, M +0.50, L +1.10).
+/// When a product has rows for a group in a store, only those options of the group are offered there, at these prices.
+/// Without rows, the group's options are offered at their normal price. Filled by the BROWN menu sync.
+model ProductOption {
+  id         String   @id @default(uuid()) @db.Uuid
+  productId  String   @map("product_id") @db.Uuid
+  optionId   String   @map("option_id") @db.Uuid
+  storeId    String   @map("store_id") @db.Uuid
+  /// Added to the item price in this store (can be 0)
+  priceDelta Decimal  @default(0) @map("price_delta") @db.Decimal(14, 2)
+  /// Pre-selected on the POS for this product
+  isDefault  Boolean  @default(false) @map("is_default")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  product Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  option  ModifierOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  store   Store          @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, optionId, storeId])
+  @@index([storeId, productId])
+  @@map("product_options")
 }
 
 /// Daily queue numbers per store (A001, A002, ...).

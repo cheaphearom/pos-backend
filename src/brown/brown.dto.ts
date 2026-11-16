@@ -33,3 +33,21 @@ export class BrownSyncDto {
   @IsOptional() @IsObject()
   response?: Record<string, unknown>;
 }
+
+/** Sync every active store that has a BROWN store id, with the same BROWN login. */
+export class BrownSyncAllDto {
+  @IsOptional() @ValidateIf((_, v) => v !== '') @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_tld: false }, { message: 'API URL must start with http:// or https://' }) @MaxLength(300)
+  apiUrl?: string;
+
+  @IsOptional() @IsString() @MaxLength(100)
+  username?: string;
+
+  @IsString() @Matches(/^\d{6,30}$/, { message: 'dev_kid is a number, e.g. 520220510160112129' })
+  devKid!: string;
+
+  @IsString() @MaxLength(1000)
+  accessToken!: string;
+
+  @IsOptional() @IsString() @MaxLength(1000)
+  dataEncryption?: string;
+}

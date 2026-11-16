@@ -97,6 +97,7 @@ export class OnlineOrdersService {
         id: true, name: true, nameKm: true, description: true, imageUrl: true, sellPrice: true, unit: true, categoryId: true,
         inventory: { where: { storeId: store.id }, select: { priceOverride: true, quantity: true } }, trackStock: true,
         modifierGroups: { orderBy: { sortOrder: 'asc' }, select: { groupId: true } },
+        productOptions: { where: { storeId: store.id }, select: { optionId: true, priceDelta: true, isDefault: true, option: { select: { groupId: true } } } },
       },
       orderBy: { name: 'asc' },
     });
@@ -112,8 +113,9 @@ export class OnlineOrdersService {
       store: { code: store.code, name: store.name, address: store.address, currency: store.currency, khqr: !!store.khqrAccountId },
       categories,
       groups: groups.map(({ options, id, name, minSelect, maxSelect }) => ({ id, name, minSelect, maxSelect, options })),
-      products: products.map(({ inventory, sellPrice, modifierGroups, trackStock, ...p }) => ({
+      products: products.map(({ inventory, sellPrice, modifierGroups, trackStock, productOptions, ...p }) => ({
         ...p,
+        optionPrices: productOptions.map((o) => ({ optionId: o.optionId, groupId: o.option.groupId, price: o.priceDelta, isDefault: o.isDefault })),
         price: inventory[0]?.priceOverride ?? sellPrice,
         soldOut: trackStock && Number(inventory[0]?.quantity ?? 0) <= 0,
         modifierGroupIds: modifierGroups.map((g) => g.groupId),

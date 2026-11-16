@@ -4,7 +4,7 @@ import { Role } from '@prisma/client';
 import { AuditService } from '../audit/audit.module';
 import { CurrentPrincipal, Roles } from '../common/decorators';
 import { Principal } from '../common/principal';
-import { BrownSyncDto } from './brown.dto';
+import { BrownSyncAllDto, BrownSyncDto } from './brown.dto';
 import { BrownService } from './brown.service';
 
 @ApiTags('Stores')
@@ -21,6 +21,30 @@ export class BrownController {
   @Get('brown-sync/settings')
   settings() {
     return this.brown.settings();
+  }
+
+  /** Sync every active store that has a BROWN store id. Runs in the background; returns the run to follow with GET. */
+  @Roles(Role.SUPER_ADMIN)
+  @Post('brown-sync-all')
+  async syncAll(@CurrentPrincipal() p: Principal, @Body() dto: BrownSyncAllDto) {
+    return this.brown.startSyncAll(
+      { devKid: dto.devKid, accessToken: dto.accessToken, dataEncryption: dto.dataEncryption || undefined, apiUrl: dto.apiUrl?.trim() || undefined, username: dto.username?.trim() || undefined },
+      (job) => {
+        const ok = job.results.filter((r) => r.ok);
+        this.audit.add(p, {
+          action: 'BROWN_MENU_SYNCED_ALL', entityType: 'store', entityId: 'all',
+          summary: `BROWN menu synced for ${ok.length} of ${job.total} stores${job.stopped ? ' (stopped early)' : ''}`,
+          details: { total: job.total, synced: ok.map((r) => r.store), failed: job.results.filter((r) => !r.ok).map((r) => ({ store: r.store, error: r.error })), stopped: job.stopped },
+        });
+      },
+    );
+  }
+
+  /** Progress and results of a "sync all stores" run */
+  @Roles(Role.SUPER_ADMIN)
+  @Get('brown-sync-all/:jobId')
+  syncAllStatus(@Param('jobId', ParseUUIDPipe) jobId: string) {
+    return this.brown.syncAllStatus(jobId);
   }
 
   /** Sync this store's menu from the BROWN system: new items are created, existing ones (same SKU) updated. */
