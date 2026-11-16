@@ -85,6 +85,6 @@ if (chaosConfig.enabled && config.nodeEnv === 'production') {
  * The POS server calls this address, so it must be reachable from the server.
  */
 export const brownConfig = {
-  menuUrl: process.env.BROWN_MENU_API_URL ?? 'https://dev.brown.com.kh/Client_API/V7/item_menu/',
+  menuUrl: process.env.BROWN_MENU_API_URL ?? 'https://dev.brown.com.kh/Client_API/V7/brown_pos_menu_listing/',
   timeoutMs: num(process.env.BROWN_TIMEOUT_MS, 30_000),
 };

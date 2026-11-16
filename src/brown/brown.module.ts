@@ -28,7 +28,7 @@ export class BrownController {
   @Post('brown-sync-all')
   async syncAll(@CurrentPrincipal() p: Principal, @Body() dto: BrownSyncAllDto) {
     return this.brown.startSyncAll(
-      { devKid: dto.devKid, accessToken: dto.accessToken, dataEncryption: dto.dataEncryption || undefined, apiUrl: dto.apiUrl?.trim() || undefined, username: dto.username?.trim() || undefined },
+      { devKid: dto.devKid, accessToken: dto.accessToken, dataEncryption: dto.dataEncryption || undefined, apiUrl: dto.apiUrl?.trim() || undefined, username: dto.username?.trim() || undefined, groupIds: dto.groupIds?.trim() || undefined },
       (job) => {
         const ok = job.results.filter((r) => r.ok);
         this.audit.add(p, {
