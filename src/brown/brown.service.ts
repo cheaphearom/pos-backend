@@ -1,11 +1,79 @@
-import { BadGatewayException, BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
-import { createHmac } from 'node:crypto';
+import { BadGatewayException, BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { createHmac, randomUUID } from 'node:crypto';
 import { brownConfig } from '../config';
 import { PrismaService } from '../prisma/prisma.service';
 import { BrownSyncDto } from './brown.dto';
 
 /** One menu item, as the POS needs it */
-export interface BrownItem { sku: string; name: string; category: string; imageUrl: string | null; price: number }
+export interface BrownItem {
+  sku: string;
+  name: string;
+  category: string;
+  imageUrl: string | null;
+  /** Lowest size price (the price shown on the POS tile); sizes add the difference */
+  price: number;
+  /** true when the response has the item's detail (sizes, options, add-ons): the full POS menu */
+  hasDetail: boolean;
+  /** S / M / L with their full price in this store, cheapest first */
+  sizes: { name: string; price: number; isDefault: boolean }[];
+  /** Free choices, e.g. Sweetness: Less Sweet-50%, Extra Sweet-150% */
+  modifiers: { group: string; options: string[] }[];
+  /** Paid extras, e.g. Personalize: Extra Caramel Syrup +0.50 */
+  addons: { group: string; options: { name: string; price: number }[] }[];
+}
+
+/** Name of the option group that holds the sizes */
+export const SIZE_GROUP = 'Size';
+
+const money = (v: unknown) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : null;
+};
+const clean = (v: unknown, max: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
+/** "Sweetness 3" and "Sweetness" are the same choice for the cashier */
+const groupName = (v: unknown) => clean(v, 60).replace(/\s+\d+$/, '');
+
+/** Sizes, free options and paid add-ons from an item's `detail` (brown_pos_menu_listing, action list_item_menu_full). */
+function parseDetail(d: any): Pick<BrownItem, 'sizes' | 'modifiers' | 'addons'> {
+  const sizes = new Map<string, { name: string; price: number; isDefault: boolean }>();
+  for (const pr of Array.isArray(d?.prices) ? d.prices : []) {
+    const name = clean(pr?.size_name, 60) || 'Regular';
+    const price = money(pr?.price);
+    if (price === null || sizes.has(name)) continue;
+    sizes.set(name, { name, price, isDefault: String(pr?.default_size ?? '').trim() === '1' });
+  }
+  const sizeList = [...sizes.values()].sort((a, b) => a.price - b.price || a.name.localeCompare(b.name));
+  if (sizeList.length && !sizeList.some((x) => x.isDefault)) sizeList[0].isDefault = true;
+
+  const modifiers = new Map<string, Set<string>>();
+  for (const g of Array.isArray(d?.modifiers) ? d.modifiers : []) {
+    const name = groupName(g?.modifier_group);
+    if (!name) continue;
+    const set = modifiers.get(name) ?? new Set<string>();
+    for (const o of Array.isArray(g?.modifier_options) ? g.modifier_options : []) {
+      const opt = clean(o?.modifier_item, 60);
+      if (opt) set.add(opt);
+    }
+    if (set.size) modifiers.set(name, set);
+  }
+  const addons = new Map<string, Map<string, number>>();
+  for (const g of Array.isArray(d?.addons) ? d.addons : []) {
+    const name = groupName(g?.addon_group) || 'Add-ons';
+    const map = addons.get(name) ?? new Map<string, number>();
+    for (const o of Array.isArray(g?.addon_options) ? g.addon_options : []) {
+      const opt = clean(o?.addon_item, 60);
+      const price = money(o?.addon_price);
+      if (opt && price !== null && !map.has(opt)) map.set(opt, price);
+    }
+    if (map.size) addons.set(name, map);
+  }
+  return {
+    sizes: sizeList,
+    modifiers: [...modifiers].map(([group, set]) => ({ group, options: [...set] })),
+    addons: [...addons].map(([group, map]) => ({ group, options: [...map].map(([name, price]) => ({ name, price })) })),
+  };
+}
 
 /** These "categories" depend on the app user (favourites, recent orders), not on the menu. */
 const PERSONAL = new Set(['my menu', 'recent', 'todays offer', "today's offer"]);
@@ -53,12 +121,16 @@ export function parseBrownMenu(response: unknown): BrownItem[] {
         const price = Number(it?.price);
         if (!sku || sku.length > 50 || !Number.isFinite(price) || price < 0) continue;
         const pic = typeof it?.item_picture === 'string' ? it.item_picture.trim() : '';
+        const hasDetail = !!it?.detail && typeof it.detail === 'object';
+        const detail = hasDetail ? parseDetail(it.detail) : { sizes: [], modifiers: [], addons: [] };
         rows.push({
           sku,
           name: String(it?.item_name ?? sku).trim().slice(0, 200) || sku,
           category,
           imageUrl: /^https?:\/\//.test(pic) && !/\/(null)?$/.test(pic) ? pic : null,
-          price: Math.round(price * 100) / 100,
+          price: detail.sizes.length ? detail.sizes[0].price : Math.round(price * 100) / 100,
+          hasDetail,
+          ...detail,
           rank: (lastResort ? 1_000_000 : 0) + gi * 1000 + ci,
         });
       }
@@ -78,11 +150,33 @@ export interface BrownSyncResult {
   productsUpdated: number;
   addedToStore: number;
   storePrices: number;
+  /** Items whose sizes, options or add-ons changed in this store */
+  optionsUpdated: number;
 }
+
+/** One store in a "sync all stores" run */
+export interface BrownSyncAllRow { store: string; name: string; ok: boolean; items?: number; productsCreated?: number; productsUpdated?: number; optionsUpdated?: number; error?: string }
+
+/** A "sync all stores" run. It runs in the background; the Stores page asks for its progress. */
+export interface BrownSyncAllJob {
+  id: string;
+  startedAt: string;
+  finishedAt: string | null;
+  running: boolean;
+  total: number;
+  done: number;
+  stopped: string | null;
+  results: BrownSyncAllRow[];
+}
+
+/** What a "sync all stores" run needs (the same for every store) */
+export interface BrownSyncAllInput { devKid: string; accessToken: string; dataEncryption?: string; apiUrl?: string; username?: string }
 
 @Injectable()
 export class BrownService {
   private readonly log = new Logger('BrownSync');
+  /** Recent "sync all stores" runs (in memory; the last 5) */
+  private readonly jobs = new Map<string, BrownSyncAllJob>();
   constructor(private readonly prisma: PrismaService) {}
 
   /** The address used when the Sync dialog leaves API URL empty. */
@@ -91,15 +185,20 @@ export class BrownService {
   }
 
   /**
-   * Calls a BROWN menu API for one BROWN store. Two request formats:
-   *  - .../brown_app_menu_listing/ (app API): flat fields
+   * Calls a BROWN menu API for one BROWN store. Request formats:
+   *  - .../brown_pos_menu_listing/ (POS API, full menu with sizes, options, add-ons): flat fields, action list_item_menu_full
+   *  - .../brown_app_menu_listing/ (app API): flat fields, action list_item_menu
    *  - anything else (Client_API .../item_menu/): { dev_kid, function, datas: { ... } }
    */
   async fetchMenu(brownStoreId: string, devKid: string, accessToken: string, dataEncryption?: string, apiUrl?: string, username?: string): Promise<unknown> {
     const url = this.checkUrl(apiUrl || brownConfig.menuUrl);
     const dataEnc = dataEncryption || brownDataEnc(accessToken, devKid);
-    const body = /brown_app_menu_listing/i.test(url.pathname)
-      ? { dev_kid: devKid, username: username ?? '', data_enc: dataEnc, user_access_token: accessToken, action: 'list_item_menu', store_id: brownStoreId, service_type: '' }
+    const posApi = /brown_pos_menu_listing/i.test(url.pathname);
+    const body = posApi || /_menu_listing/i.test(url.pathname)
+      ? {
+          dev_kid: devKid, username: username ?? '', data_enc: dataEnc, user_access_token: accessToken,
+          action: posApi ? 'list_item_menu_full' : 'list_item_menu', store_id: brownStoreId, service_type: posApi ? 'pickup' : '',
+        }
       : {
           dev_kid: devKid,
           function: 'list_item_menu',
@@ -226,11 +325,172 @@ export class BrownService {
         }
         if (create.length) await tx.inventory.createMany({ data: create, skipDuplicates: true });
 
-        return { categoriesCreated: missing.length, productsCreated: fresh.length, productsUpdated: updated, addedToStore: added, storePrices };
+        const optionsUpdated = await this.syncOptions(tx, storeId, items.filter((i) => i.hasDetail), prod);
+
+        return { categoriesCreated: missing.length, productsCreated: fresh.length, productsUpdated: updated, addedToStore: added, storePrices, optionsUpdated };
       },
       { timeout: 120_000, maxWait: 10_000 },
     );
-    this.log.log(`BROWN menu synced for ${store.code}: ${items.length} items, ${result.productsCreated} new, ${result.productsUpdated} updated`);
+    this.log.log(`BROWN menu synced for ${store.code}: ${items.length} items, ${result.productsCreated} new, ${result.productsUpdated} updated, ${result.optionsUpdated} with new options`);
     return { store: store.code, brownStoreId: brownStoreId ?? null, items: items.length, ...result };
+  }
+
+  /**
+   * Sizes, options and add-ons from the full BROWN menu:
+   *  - option groups and options are found or created by name (Size: S/M/L; BROWN option groups; add-on groups)
+   *  - each item offers exactly its BROWN groups (replacing the ones it had)
+   *  - this store's rows in product_options say which options the item offers here, at what price, and the default size
+   * Changed items get a new updated_at, so cashier screens download them again.
+   */
+  private async syncOptions(tx: Prisma.TransactionClient, storeId: string, items: BrownItem[], prod: Map<string, { id: string }>): Promise<number> {
+    if (!items.length) return 0;
+
+    // 1. Groups: Size (required), BROWN options (optional, one), add-ons (optional, several)
+    const groupSpec = new Map<string, { minSelect: number; maxSelect: number; sortOrder: number }>();
+    if (items.some((i) => i.sizes.length > 1)) groupSpec.set(SIZE_GROUP, { minSelect: 1, maxSelect: 1, sortOrder: 0 });
+    for (const i of items) {
+      for (const m of i.modifiers) if (!groupSpec.has(m.group)) groupSpec.set(m.group, { minSelect: 0, maxSelect: 1, sortOrder: 10 + groupSpec.size });
+      for (const a of i.addons) if (!groupSpec.has(a.group)) groupSpec.set(a.group, { minSelect: 0, maxSelect: 20, sortOrder: 50 + groupSpec.size });
+    }
+    const haveGroups = await tx.modifierGroup.findMany({ where: { name: { in: [...groupSpec.keys()] } }, select: { id: true, name: true } });
+    const groupId = new Map(haveGroups.map((g) => [g.name, g.id]));
+    for (const [name, spec] of groupSpec) if (!groupId.has(name)) groupId.set(name, (await tx.modifierGroup.create({ data: { name, ...spec }, select: { id: true } })).id);
+
+    // 2. Options, found or created by name inside their group
+    const wanted = new Map<string, Map<string, number>>(); // group -> option name -> default price for a new option
+    const want = (g: string, o: string, price = 0) => {
+      const m = wanted.get(g) ?? new Map<string, number>();
+      if (!m.has(o)) m.set(o, price);
+      wanted.set(g, m);
+    };
+    for (const i of items) {
+      if (i.sizes.length > 1) for (const s of i.sizes) want(SIZE_GROUP, s.name);
+      for (const m of i.modifiers) for (const o of m.options) want(m.group, o);
+      for (const a of i.addons) for (const o of a.options) want(a.group, o.name, o.price);
+    }
+    const optionId = new Map<string, string>(); // "group|option" -> id
+    for (const [g, opts] of wanted) {
+      const gid = groupId.get(g)!;
+      const have = await tx.modifierOption.findMany({ where: { groupId: gid, name: { in: [...opts.keys()] } }, select: { id: true, name: true } });
+      for (const o of have) optionId.set(`${g}|${o.name}`, o.id);
+      let sort = await tx.modifierOption.count({ where: { groupId: gid } });
+      for (const [name, price] of opts) {
+        if (optionId.has(`${g}|${name}`)) continue;
+        const o = await tx.modifierOption.create({ data: { groupId: gid, name, priceDelta: price, sortOrder: ++sort }, select: { id: true } });
+        optionId.set(`${g}|${name}`, o.id);
+      }
+    }
+
+    // 3. Per item: its groups (in order) and this store's options with prices
+    const productIds = items.map((i) => prod.get(i.sku)!.id);
+    const [links, rows] = await Promise.all([
+      tx.productModifierGroup.findMany({ where: { productId: { in: productIds } }, orderBy: { sortOrder: 'asc' }, select: { productId: true, groupId: true } }),
+      tx.productOption.findMany({ where: { storeId, productId: { in: productIds } }, select: { id: true, productId: true, optionId: true, priceDelta: true, isDefault: true } }),
+    ]);
+    const linksBy = new Map<string, string[]>();
+    for (const l of links) linksBy.set(l.productId, [...(linksBy.get(l.productId) ?? []), l.groupId]);
+    const rowsBy = new Map<string, typeof rows>();
+    for (const r of rows) rowsBy.set(r.productId, [...(rowsBy.get(r.productId) ?? []), r]);
+
+    const changed: string[] = [];
+    for (const i of items) {
+      const pid = prod.get(i.sku)!.id;
+      const groups: string[] = [];
+      const desired = new Map<string, { price: number; isDefault: boolean }>();
+      if (i.sizes.length > 1) {
+        groups.push(groupId.get(SIZE_GROUP)!);
+        for (const s of i.sizes) desired.set(optionId.get(`${SIZE_GROUP}|${s.name}`)!, { price: Math.round((s.price - i.price) * 100) / 100, isDefault: s.isDefault });
+      }
+      for (const m of i.modifiers) {
+        groups.push(groupId.get(m.group)!);
+        for (const o of m.options) desired.set(optionId.get(`${m.group}|${o}`)!, { price: 0, isDefault: false });
+      }
+      for (const a of i.addons) {
+        if (!groups.includes(groupId.get(a.group)!)) groups.push(groupId.get(a.group)!);
+        for (const o of a.options) desired.set(optionId.get(`${a.group}|${o.name}`)!, { price: o.price, isDefault: false });
+      }
+      const uniqueGroups = [...new Set(groups)];
+      let itemChanged = false;
+
+      // groups the item offers (same for every store): replaced when different
+      if ((linksBy.get(pid) ?? []).join() !== uniqueGroups.join()) {
+        await tx.productModifierGroup.deleteMany({ where: { productId: pid } });
+        if (uniqueGroups.length) await tx.productModifierGroup.createMany({ data: uniqueGroups.map((g, n) => ({ productId: pid, groupId: g, sortOrder: n })) });
+        await tx.product.update({ where: { id: pid }, data: { updatedAt: new Date() } });
+        itemChanged = true;
+      }
+      // this store's options and prices
+      const current = rowsBy.get(pid) ?? [];
+      const stale = current.filter((r) => !desired.has(r.optionId)).map((r) => r.id);
+      if (stale.length) {
+        await tx.productOption.deleteMany({ where: { id: { in: stale } } });
+        itemChanged = true;
+      }
+      const toCreate: Prisma.ProductOptionCreateManyInput[] = [];
+      for (const [oid, want] of desired) {
+        const row = current.find((r) => r.optionId === oid);
+        if (!row) toCreate.push({ productId: pid, optionId: oid, storeId, priceDelta: want.price, isDefault: want.isDefault });
+        else if (Number(row.priceDelta) !== want.price || row.isDefault !== want.isDefault) {
+          await tx.productOption.update({ where: { id: row.id }, data: { priceDelta: want.price, isDefault: want.isDefault } });
+          itemChanged = true;
+        }
+      }
+      if (toCreate.length) {
+        await tx.productOption.createMany({ data: toCreate, skipDuplicates: true });
+        itemChanged = true;
+      }
+      if (itemChanged) changed.push(pid);
+    }
+    // cashier screens of this store download changed items again
+    if (changed.length) await tx.inventory.updateMany({ where: { storeId, productId: { in: changed } }, data: { updatedAt: new Date() } });
+    return changed.length;
+  }
+
+  /** Starts syncing every active store that has a BROWN store id. Only one run at a time. */
+  startSyncAll(input: BrownSyncAllInput, onDone?: (job: BrownSyncAllJob) => void): Promise<BrownSyncAllJob> | BrownSyncAllJob {
+    const running = [...this.jobs.values()].find((j) => j.running);
+    if (running) return running;
+    return this.prisma.store
+      .findMany({ where: { isActive: true, externalId: { not: null } }, select: { id: true, code: true, name: true }, orderBy: { code: 'asc' } })
+      .then((stores) => {
+        if (!stores.length) throw new BadRequestException('No active store has a BROWN store id yet');
+        const job: BrownSyncAllJob = { id: randomUUID(), startedAt: new Date().toISOString(), finishedAt: null, running: true, total: stores.length, done: 0, stopped: null, results: [] };
+        this.jobs.set(job.id, job);
+        for (const id of [...this.jobs.keys()].slice(0, -5)) this.jobs.delete(id);
+        // the same data_encryption works for every store (it depends on the token and the month)
+        const dataEncryption = input.dataEncryption || brownDataEnc(input.accessToken, input.devKid);
+        void (async () => {
+          let failedInARow = 0;
+          for (const s of stores) {
+            try {
+              const r = await this.sync(s.id, { devKid: input.devKid, accessToken: input.accessToken, dataEncryption, apiUrl: input.apiUrl, username: input.username });
+              job.results.push({ store: s.code, name: s.name, ok: true, items: r.items, productsCreated: r.productsCreated, productsUpdated: r.productsUpdated, optionsUpdated: r.optionsUpdated });
+              failedInARow = 0;
+            } catch (e) {
+              job.results.push({ store: s.code, name: s.name, ok: false, error: (e as Error).message });
+              failedInARow++;
+            }
+            job.done++;
+            // the same error 3 times in a row (BROWN unreachable, token expired...): stop instead of failing every store
+            const last = job.results.slice(-3);
+            if (failedInARow >= 3 && last.every((r) => r.error === last[0].error)) {
+              job.stopped = `Stopped after 3 stores with the same error: ${last[0].error}`;
+              break;
+            }
+          }
+          job.running = false;
+          job.finishedAt = new Date().toISOString();
+          this.log.log(`BROWN sync all: ${job.results.filter((r) => r.ok).length} of ${job.total} stores synced${job.stopped ? ' (stopped)' : ''}`);
+          onDone?.(job);
+        })();
+        return job;
+      });
+  }
+
+  /** Progress of a "sync all stores" run */
+  syncAllStatus(id: string): BrownSyncAllJob {
+    const job = this.jobs.get(id);
+    if (!job) throw new NotFoundException('This sync run is not known (the server may have restarted). Start it again.');
+    return job;
   }
 }

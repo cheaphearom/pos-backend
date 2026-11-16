@@ -1,3 +1,4 @@
+import { productOptionsFor } from '../modifiers/product-options';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import { ApprovalsService, AuditService } from '../audit/audit.module';
@@ -368,14 +369,20 @@ export class SalesService {
     const links = await this.prisma.productModifierGroup.findMany({ where: { productId: { in: productIds } }, include: { group: true } });
     for (const l of links) groupsByProduct.set(l.productId, [...(groupsByProduct.get(l.productId) ?? []), l]);
 
+    // This store's own options per product (sizes with their price, the BROWN options a drink offers)
+    const ownOptions = await productOptionsFor(this.prisma, dto.storeId, productIds);
+
     const baseLines = dto.items.map((i) => {
       const prod = byId.get(i.productId)!;
       const allowed = (groupsByProduct.get(prod.id) ?? []).filter((g) => g.group.isActive);
+      const own = ownOptions.get(prod.id) ?? [];
       const chosen = (i.modifiers ?? []).map((id) => {
         const o = optionById.get(id);
         if (!o || !o.isActive) throw new BadRequestException(`Option ${id} is not available`);
         if (!allowed.some((g) => g.groupId === o.groupId)) throw new BadRequestException(`"${o.name}" is not an option of ${prod.name}`);
-        return o;
+        const mine = own.find((r) => r.optionId === o.id);
+        if (!mine && own.some((r) => r.groupId === o.groupId)) throw new BadRequestException(`"${o.name}" is not an option of ${prod.name} in this store`);
+        return mine ? { ...o, priceDelta: mine.price } : o;
       });
       for (const g of allowed) {
         const n = chosen.filter((o) => o.groupId === g.groupId).length;

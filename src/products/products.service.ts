@@ -75,14 +75,17 @@ export class ProductsService {
         trackStock: true, isActive: true, categoryId: true, imageUrl: true, isIngredient: true,
         inventory: { where: { storeId }, select: { quantity: true, priceOverride: true, isListed: true } },
         modifierGroups: { orderBy: { sortOrder: 'asc' }, select: { groupId: true } },
+        productOptions: { where: { storeId }, select: { optionId: true, priceDelta: true, isDefault: true, option: { select: { groupId: true } } } },
       },
       orderBy: { name: 'asc' },
     });
     return {
       serverTime,
       full: !sinceDate,
-      products: rows.map(({ inventory, sellPrice, modifierGroups, isIngredient, ...r }) => ({
+      products: rows.map(({ inventory, sellPrice, modifierGroups, isIngredient, productOptions, ...r }) => ({
         ...r,
+        // this store's own options (sizes with their price, which options the drink offers)
+        optionPrices: productOptions.map((o) => ({ optionId: o.optionId, groupId: o.option.groupId, price: o.priceDelta, isDefault: o.isDefault })),
         // ingredients are never sold at the POS, nor products this store does not sell
         isActive: r.isActive && !isIngredient && !!inventory[0]?.isListed,
         modifierGroupIds: modifierGroups.map((m) => m.groupId),
