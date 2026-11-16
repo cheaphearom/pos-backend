@@ -25,6 +25,8 @@ export interface BrownItem {
 
 /** Name of the option group that holds the sizes */
 export const SIZE_GROUP = 'Size';
+/** BROWN size codes (detail.prices[].fcode) */
+const SIZE_BY_FCODE: Record<number, string> = { 1: 'S', 2: 'M', 3: 'L' };
 
 const money = (v: unknown) => {
   const n = Number(v);
@@ -36,14 +38,18 @@ const groupName = (v: unknown) => clean(v, 60).replace(/\s+\d+$/, '');
 
 /** Sizes, free options and paid add-ons from an item's `detail` (brown_pos_menu_listing, action list_item_menu_full). */
 function parseDetail(d: any): Pick<BrownItem, 'sizes' | 'modifiers' | 'addons'> {
-  const sizes = new Map<string, { name: string; price: number; isDefault: boolean }>();
+  // fcode is BROWN's size code: 1 = S, 2 = M, 3 = L (size_name is only used for an unknown code)
+  const sizes = new Map<string, { name: string; price: number; isDefault: boolean; order: number }>();
   for (const pr of Array.isArray(d?.prices) ? d.prices : []) {
-    const name = clean(pr?.size_name, 60) || 'Regular';
+    const fcode = Number(String(pr?.fcode ?? '').trim());
+    const name = SIZE_BY_FCODE[fcode] ?? (clean(pr?.size_name, 60) || 'Regular');
     const price = money(pr?.price);
     if (price === null || sizes.has(name)) continue;
-    sizes.set(name, { name, price, isDefault: String(pr?.default_size ?? '').trim() === '1' });
+    sizes.set(name, { name, price, isDefault: String(pr?.default_size ?? '').trim() === '1', order: Number.isFinite(fcode) && fcode > 0 ? fcode : 99 });
   }
-  const sizeList = [...sizes.values()].sort((a, b) => a.price - b.price || a.name.localeCompare(b.name));
+  const sizeList = [...sizes.values()]
+    .sort((a, b) => a.order - b.order || a.price - b.price || a.name.localeCompare(b.name))
+    .map(({ order: _, ...x }) => x);
   if (sizeList.length && !sizeList.some((x) => x.isDefault)) sizeList[0].isDefault = true;
 
   const modifiers = new Map<string, Set<string>>();
@@ -128,7 +134,7 @@ export function parseBrownMenu(response: unknown): BrownItem[] {
           name: String(it?.item_name ?? sku).trim().slice(0, 200) || sku,
           category,
           imageUrl: /^https?:\/\//.test(pic) && !/\/(null)?$/.test(pic) ? pic : null,
-          price: detail.sizes.length ? detail.sizes[0].price : Math.round(price * 100) / 100,
+          price: detail.sizes.length ? Math.min(...detail.sizes.map((x) => x.price)) : Math.round(price * 100) / 100,
           hasDetail,
           ...detail,
           rank: (lastResort ? 1_000_000 : 0) + gi * 1000 + ci,
