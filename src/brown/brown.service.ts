@@ -9,6 +9,8 @@ import { BrownSyncDto } from './brown.dto';
 export interface BrownItem {
   sku: string;
   name: string;
+  /** BROWN group (e.g. Beverages): the parent of the category. Null for Personal Menu and similar groups. */
+  group: string | null;
   category: string;
   imageUrl: string | null;
   /** Lowest size price (the price shown on the POS tile); sizes add the difference */
@@ -81,6 +83,9 @@ function parseDetail(d: any): Pick<BrownItem, 'sizes' | 'modifiers' | 'addons'> 
   };
 }
 
+/** An item's place in the POS category tree: group + category */
+const catKey = (i: Pick<BrownItem, 'group' | 'category'>) => `${i.group ?? ''}\u0000${i.category}`;
+
 /** These "categories" depend on the app user (favourites, recent orders), not on the menu. */
 const PERSONAL = new Set(['my menu', 'recent', 'todays offer', "today's offer"]);
 /** Groups whose items are also in a real category: an item found there only keeps it if it is nowhere else. */
@@ -132,7 +137,8 @@ export function parseBrownMenu(response: unknown): BrownItem[] {
   }
   const rows: (BrownItem & { rank: number })[] = [];
   groups.forEach((g, gi) => {
-    const lastResort = LAST_RESORT.has(String(g?.group_name ?? '').trim().toLowerCase());
+    const groupName = String(g?.group_name ?? '').trim().slice(0, 100);
+    const lastResort = LAST_RESORT.has(groupName.toLowerCase());
     (Array.isArray(g?.categories) ? g.categories : []).forEach((c: any, ci: number) => {
       const category = String(c?.category_name ?? '').trim().slice(0, 100);
       if (!category || PERSONAL.has(category.toLowerCase())) return;
@@ -149,6 +155,7 @@ export function parseBrownMenu(response: unknown): BrownItem[] {
         rows.push({
           sku,
           name: String(it?.item_name ?? it?.detail?.menu_name ?? sku).trim().slice(0, 200) || sku,
+          group: lastResort ? null : groupName || null,
           category,
           imageUrl: /^https?:\/\//.test(pic) && !/\/(null)?$/.test(pic) ? pic : null,
           price: detail.sizes.length ? Math.min(...detail.sizes.map((x) => x.price)) : Math.round(price * 100) / 100,
@@ -302,6 +309,53 @@ export class BrownService {
     return url;
   }
 
+  /**
+   * BROWN group -> top-level category, BROWN category -> category under it (Beverages > Hot Coffee).
+   * A top-level category with the category's name (made by an older sync, or by hand) is moved under its group,
+   * so it keeps its id: promotions and reports that use it keep working.
+   */
+  private async syncCategories(tx: Prisma.TransactionClient, items: BrownItem[]) {
+    const pairs = [...new Map(items.map((i) => [catKey(i), i])).values()];
+    const groups = [...new Set(pairs.map((i) => i.group).filter((g): g is string => !!g))];
+    const top = await tx.category.findMany({ where: { parentId: null }, select: { id: true, name: true, _count: { select: { children: true } } } });
+    const topBy = new Map(top.map((c) => [c.name.toLowerCase(), c]));
+    let created = 0;
+    const groupId = new Map<string, string>();
+    for (const g of groups) {
+      let id = topBy.get(g.toLowerCase())?.id;
+      if (!id) {
+        id = (await tx.category.create({ data: { name: g }, select: { id: true } })).id;
+        created++;
+      }
+      groupId.set(g, id);
+    }
+    const groupIds = new Set(groupId.values());
+    const children = groupIds.size ? await tx.category.findMany({ where: { parentId: { in: [...groupIds] } }, select: { id: true, name: true, parentId: true } }) : [];
+    const childBy = new Map(children.map((c) => [`${c.parentId}\u0000${c.name.toLowerCase()}`, c.id]));
+    const moved = new Set<string>();
+    const catId = new Map<string, string>();
+    for (const i of pairs) {
+      const parentId = i.group ? groupId.get(i.group)! : null;
+      let id = parentId ? childBy.get(`${parentId}\u0000${i.category.toLowerCase()}`) : topBy.get(i.category.toLowerCase())?.id;
+      if (!id && parentId) {
+        // an older flat category of this name: move it under its group (once; not a group itself, no sub-categories)
+        const old = topBy.get(i.category.toLowerCase());
+        if (old && !groupIds.has(old.id) && !moved.has(old.id) && !old._count.children) {
+          await tx.category.update({ where: { id: old.id }, data: { parentId } });
+          moved.add(old.id);
+          id = old.id;
+        }
+      }
+      if (!id) {
+        id = (await tx.category.create({ data: { name: i.category, parentId }, select: { id: true } })).id;
+        created++;
+      }
+      if (!parentId) topBy.set(i.category.toLowerCase(), { id, name: i.category, _count: { children: 0 } });
+      catId.set(catKey(i), id);
+    }
+    return { catId, created };
+  }
+
   /** Adds new items, updates existing ones (same SKU), and lists all of them in the store. */
   async sync(storeId: string, dto: BrownSyncDto): Promise<BrownSyncResult> {
     const store = await this.prisma.store.findUniqueOrThrow({ where: { id: storeId }, select: { id: true, code: true, externalId: true } });
@@ -330,12 +384,8 @@ export class BrownService {
       async (tx) => {
         if (brownStoreId && brownStoreId !== store.externalId) await tx.store.update({ where: { id: storeId }, data: { externalId: brownStoreId } });
 
-        // Categories (top level), reused by name
-        const names = [...new Set(items.map((i) => i.category))];
-        const have = await tx.category.findMany({ where: { parentId: null, name: { in: names } }, select: { id: true, name: true } });
-        const catId = new Map(have.map((c) => [c.name, c.id]));
-        const missing = names.filter((n) => !catId.has(n));
-        for (const name of missing) catId.set(name, (await tx.category.create({ data: { name }, select: { id: true } })).id);
+        const { catId, created: categoriesCreated } = await this.syncCategories(tx, items);
+        const catOf = (i: BrownItem) => catId.get(catKey(i))!;
 
         // Products: same SKU = update name, picture and category; new SKU = create (no stock tracking, no recipe yet)
         const existing = await tx.product.findMany({
@@ -350,7 +400,7 @@ export class BrownService {
           const data = {
             ...(p.name !== i.name && { name: i.name }),
             ...(i.imageUrl && p.imageUrl !== i.imageUrl && { imageUrl: i.imageUrl }),
-            ...(p.categoryId !== catId.get(i.category) && { categoryId: catId.get(i.category) }),
+            ...(p.categoryId !== catOf(i) && { categoryId: catOf(i) }),
           };
           if (Object.keys(data).length) {
             await tx.product.update({ where: { id: p.id }, data });
@@ -360,7 +410,7 @@ export class BrownService {
         const fresh = items.filter((i) => !bySku.has(i.sku));
         if (fresh.length) {
           await tx.product.createMany({
-            data: fresh.map((i) => ({ sku: i.sku, name: i.name, categoryId: catId.get(i.category), sellPrice: i.price, imageUrl: i.imageUrl, trackStock: false, unit: 'pcs' })),
+            data: fresh.map((i) => ({ sku: i.sku, name: i.name, categoryId: catOf(i), sellPrice: i.price, imageUrl: i.imageUrl, trackStock: false, unit: 'pcs' })),
             skipDuplicates: true,
           });
         }
@@ -390,7 +440,7 @@ export class BrownService {
 
         const optionsUpdated = await this.syncOptions(tx, storeId, items.filter((i) => i.hasDetail), prod);
 
-        return { categoriesCreated: missing.length, productsCreated: fresh.length, productsUpdated: updated, addedToStore: added, storePrices, optionsUpdated };
+        return { categoriesCreated, productsCreated: fresh.length, productsUpdated: updated, addedToStore: added, storePrices, optionsUpdated };
       },
       { timeout: 120_000, maxWait: 10_000 },
     );

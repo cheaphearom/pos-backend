@@ -1,10 +1,10 @@
 import { AuditService } from '../audit/audit.module';
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { CurrentPrincipal, Roles, Scopes } from '../common/decorators';
 import { Principal } from '../common/principal';
-import { BulkUpsertProductsDto, CreateProductDto, ProductQueryDto, UpdateProductDto } from './products.dto';
+import { BulkUpsertProductsDto, CreateProductDto, ProductQueryDto, SetSizePricesDto, UpdateProductDto } from './products.dto';
 import { ProductsService } from './products.service';
 
 @ApiTags('Products')
@@ -35,6 +35,24 @@ export class ProductsController {
   @Get('lookup')
   lookup(@CurrentPrincipal() p: Principal, @Query('code') code: string, @Query('storeId', ParseUUIDPipe) storeId: string) {
     return this.products.lookup(p, code, storeId);
+  }
+
+  /** Full price of each size (S / M / L) in each store */
+  @Scopes('products:read')
+  @Get(':id/size-prices')
+  sizePrices(@Param('id', ParseUUIDPipe) id: string) {
+    return this.products.sizePrices(id);
+  }
+
+  @Roles(Role.SUPER_ADMIN)
+  @Scopes('products:write')
+  @Put(':id/size-prices')
+  async setSizePrices(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: SetSizePricesDto) {
+    const out = await this.products.setSizePrices(id, dto);
+    const product = await this.products.get(p, id).catch(() => null);
+    this.audit.add(p, { action: 'PRODUCT_SIZE_PRICES_CHANGED', entityType: 'product', entityId: product?.sku ?? id,
+      summary: `${product?.name ?? 'Product'}: size prices changed in ${dto.stores.length} store(s)` });
+    return out;
   }
 
   @Scopes('products:read')
