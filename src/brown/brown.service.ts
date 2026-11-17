@@ -108,6 +108,20 @@ function findGroups(v: unknown, depth = 0): any[] | null {
   return null;
 }
 
+/** What a BROWN answer contains, for error messages: "BROWN sent 2 groups: Beverages (Cold Drinks: 0 items, ...)" */
+export function describeMenu(response: unknown): string {
+  const groups = findGroups(response);
+  const r = response as any;
+  const head = [r?.code != null ? `code ${r.code}` : '', typeof r?.name === 'string' ? r.name : ''].filter(Boolean).join(', ');
+  if (!groups) return `BROWN answered${head ? ` (${head})` : ''} without a menu.`;
+  if (!groups.length) return `BROWN answered${head ? ` (${head})` : ''} with an empty menu (0 groups). Try BROWN group ids in the Sync dialog.`;
+  const parts = groups.slice(0, 8).map((g: any) => {
+    const cats = (Array.isArray(g?.categories) ? g.categories : []).map((c: any) => `${String(c?.category_name ?? '?').trim()}: ${Array.isArray(c?.items) ? c.items.length : 0}`);
+    return `${String(g?.group_name ?? '?').trim()} (${cats.join(', ') || 'no categories'})`;
+  });
+  return `BROWN sent ${groups.length} group(s), items per category: ${parts.join('; ')}${groups.length > 8 ? '; …' : ''}. My Menu, Recent and Todays Offer are skipped; items need an item_id and a price.`;
+}
+
 /** The menu items of a BROWN response, one per SKU, each in its first real category. */
 export function parseBrownMenu(response: unknown): BrownItem[] {
   const groups = findGroups(response);
@@ -123,15 +137,18 @@ export function parseBrownMenu(response: unknown): BrownItem[] {
       const category = String(c?.category_name ?? '').trim().slice(0, 100);
       if (!category || PERSONAL.has(category.toLowerCase())) return;
       for (const it of Array.isArray(c?.items) ? c.items : []) {
-        const sku = String(it?.item_id ?? '').trim();
-        const price = Number(it?.price);
-        if (!sku || sku.length > 50 || !Number.isFinite(price) || price < 0) continue;
-        const pic = typeof it?.item_picture === 'string' ? it.item_picture.trim() : '';
         const hasDetail = !!it?.detail && typeof it.detail === 'object';
         const detail = hasDetail ? parseDetail(it.detail) : { sizes: [], modifiers: [], addons: [] };
+        const sku = String(it?.item_id ?? it?.detail?.id_menu ?? '').trim();
+        const price = Number(it?.price);
+        // an item needs an id and a price: its own, or the sizes in its detail
+        if (!sku || sku.length > 50 || (!detail.sizes.length && (!Number.isFinite(price) || price < 0))) continue;
+        const ownPic = typeof it?.item_picture === 'string' ? it.item_picture.trim() : '';
+        const detailPic = typeof it?.detail?.menu_picture === 'string' && it.detail.menu_picture.trim().startsWith('/') ? 'https://www.browncoffee.com.kh' + it.detail.menu_picture.trim() : '';
+        const pic = ownPic && !/\/(null)?$/.test(ownPic) ? ownPic : detailPic;
         rows.push({
           sku,
-          name: String(it?.item_name ?? sku).trim().slice(0, 200) || sku,
+          name: String(it?.item_name ?? it?.detail?.menu_name ?? sku).trim().slice(0, 200) || sku,
           category,
           imageUrl: /^https?:\/\//.test(pic) && !/\/(null)?$/.test(pic) ? pic : null,
           price: detail.sizes.length ? Math.min(...detail.sizes.map((x) => x.price)) : Math.round(price * 100) / 100,
@@ -300,7 +317,7 @@ export class BrownService {
       response = await this.fetchMenu(brownStoreId, dto.devKid!, dto.accessToken!, dto.dataEncryption, dto.apiUrl?.trim(), dto.username?.trim(), brownGroupIds(dto.groupIds));
     }
     const items = parseBrownMenu(response);
-    if (!items.length) throw new BadGatewayException('The BROWN menu has no items for this store');
+    if (!items.length) throw new BadGatewayException(`The BROWN menu has no items for this store. ${describeMenu(response)}`);
 
     const result = await this.prisma.$transaction(
       async (tx) => {
