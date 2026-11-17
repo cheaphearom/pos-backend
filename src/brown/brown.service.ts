@@ -1,4 +1,4 @@
-import { BadGatewayException, BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { UnprocessableEntityException, BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createHmac, randomUUID } from 'node:crypto';
 import { brownConfig } from '../config';
@@ -128,7 +128,7 @@ export function parseBrownMenu(response: unknown): BrownItem[] {
   if (!groups) {
     const r = response as any;
     const msg = [r?.name, r?.description, r?.message].filter((x) => typeof x === 'string').join(' · ');
-    throw new BadGatewayException(`BROWN did not send a menu${msg ? `: ${msg}` : ''} (code ${r?.code ?? '?'})`);
+    throw new UnprocessableEntityException(`BROWN did not send a menu${msg ? `: ${msg}` : ''} (code ${r?.code ?? '?'})`);
   }
   const rows: (BrownItem & { rank: number })[] = [];
   groups.forEach((g, gi) => {
@@ -270,13 +270,13 @@ export class BrownService {
       });
     } catch (e) {
       const why = (e as Error).name === 'TimeoutError' ? 'no answer in time' : ((e as any).cause?.code ?? (e as Error).message);
-      throw new BadGatewayException(`Cannot reach the BROWN API (${url.host}): ${why}`);
+      throw new UnprocessableEntityException(`Cannot reach the BROWN API (${url.host}): ${why}`);
     }
     const text = await res.text();
     try {
       return JSON.parse(text);
     } catch {
-      throw new BadGatewayException(`The BROWN API answered ${res.status} but not with JSON: ${text.slice(0, 160)}`);
+      throw new UnprocessableEntityException(`The BROWN API answered ${res.status} but not with JSON: ${text.slice(0, 160)}`);
     }
   }
 
@@ -312,12 +312,19 @@ export class BrownService {
     }
 
     let response: unknown = dto.response;
-    if (!response) {
-      if (!brownStoreId) throw new BadRequestException('Enter the BROWN store id');
-      response = await this.fetchMenu(brownStoreId, dto.devKid!, dto.accessToken!, dto.dataEncryption, dto.apiUrl?.trim(), dto.username?.trim(), brownGroupIds(dto.groupIds));
+    let items: ReturnType<typeof parseBrownMenu>;
+    try {
+      if (!response) {
+        if (!brownStoreId) throw new BadRequestException('Enter the BROWN store id');
+        response = await this.fetchMenu(brownStoreId, dto.devKid!, dto.accessToken!, dto.dataEncryption, dto.apiUrl?.trim(), dto.username?.trim(), brownGroupIds(dto.groupIds));
+      }
+      items = parseBrownMenu(response);
+      if (!items.length) throw new UnprocessableEntityException(`The BROWN menu has no items for this store. ${describeMenu(response)}`);
+    } catch (e) {
+      // the reason, so `docker compose logs api` shows why a sync failed (messages never hold the token)
+      this.log.warn(`BROWN sync of store ${store.code} failed: ${(e as Error).message}`);
+      throw e;
     }
-    const items = parseBrownMenu(response);
-    if (!items.length) throw new BadGatewayException(`The BROWN menu has no items for this store. ${describeMenu(response)}`);
 
     const result = await this.prisma.$transaction(
       async (tx) => {
@@ -536,7 +543,7 @@ export class BrownService {
           }
           job.running = false;
           job.finishedAt = new Date().toISOString();
-          this.log.log(`BROWN sync all: ${job.results.filter((r) => r.ok).length} of ${job.total} stores synced${job.stopped ? ' (stopped)' : ''}`);
+          this.log.log(`BROWN sync all: ${job.results.filter((r) => r.ok).length} of ${job.total} stores synced${job.stopped ? ` (${job.stopped})` : ''}`);
           onDone?.(job);
         })();
         return job;
