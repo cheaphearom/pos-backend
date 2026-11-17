@@ -142,6 +142,18 @@ export class PromotionsService {
       },
     });
     const rules = rows.map(toRule);
+    // a promotion on a category also covers the categories under it (a BROWN group such as Beverages > Hot Coffee)
+    if (rules.some((r) => r.categoryIds.length)) {
+      const cats = await this.prisma.category.findMany({ select: { id: true, parentId: true } });
+      const kids = new Map<string, string[]>();
+      for (const c of cats) if (c.parentId) kids.set(c.parentId, [...(kids.get(c.parentId) ?? []), c.id]);
+      for (const r of rules) {
+        const all = new Set(r.categoryIds);
+        const todo = [...r.categoryIds];
+        while (todo.length) for (const k of kids.get(todo.pop()!) ?? []) if (!all.has(k)) { all.add(k); todo.push(k); }
+        r.categoryIds = [...all];
+      }
+    }
     this.cache.set(storeId, { at: Date.now(), rules });
     return rules;
   }

@@ -3,16 +3,98 @@ import { Prisma } from '@prisma/client';
 import { pageArgs, toPage } from '../common/pagination';
 import { assertStoreAccess, Principal } from '../common/principal';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateProductDto, ProductQueryDto, UpdateProductDto } from './products.dto';
+import { CreateProductDto, ProductQueryDto, SetSizePricesDto, UpdateProductDto } from './products.dto';
 
 @Injectable()
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** The product's size group (a drink option group named "Size"), with the sizes it uses */
+  private async sizeGroup(productId: string) {
+    const link = await this.prisma.productModifierGroup.findFirst({
+      where: { productId, group: { name: { equals: 'Size', mode: 'insensitive' } } },
+      select: { group: { select: { id: true, name: true, options: { where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, priceDelta: true, isDefault: true } } } } },
+    });
+    if (!link) return null;
+    const used = await this.prisma.productOption.findMany({ where: { productId, option: { groupId: link.group.id } }, select: { optionId: true }, distinct: ['optionId'] });
+    const usedIds = new Set(used.map((u) => u.optionId));
+    // BROWN drinks use some sizes of the group (S, M, L): show only those; otherwise every size
+    const options = usedIds.size ? link.group.options.filter((o) => usedIds.has(o.id)) : link.group.options;
+    return { ...link.group, options };
+  }
+
+  /**
+   * Full price of each size in each store: the store's price (its own, or the selling price) plus the size's extra.
+   * Null = the store does not offer that size.
+   */
+  async sizePrices(id: string) {
+    const product = await this.prisma.product.findUniqueOrThrow({ where: { id }, select: { sellPrice: true } });
+    const group = await this.sizeGroup(id);
+    if (!group || !group.options.length) return { groupId: null, sizes: [], stores: [] };
+    const [inv, rows] = await Promise.all([
+      this.prisma.inventory.findMany({ where: { productId: id }, select: { storeId: true, priceOverride: true } }),
+      this.prisma.productOption.findMany({ where: { productId: id, option: { groupId: group.id } }, select: { storeId: true, optionId: true, priceDelta: true } }),
+    ]);
+    const round = (n: number) => Math.round(n * 100) / 100;
+    return {
+      groupId: group.id,
+      sizes: group.options.map((o) => ({ id: o.id, name: o.name })),
+      stores: inv.map((v) => {
+        const base = Number(v.priceOverride ?? product.sellPrice);
+        const own = rows.filter((r) => r.storeId === v.storeId);
+        return {
+          storeId: v.storeId,
+          prices: Object.fromEntries(group.options.map((o) => {
+            const r = own.find((x) => x.optionId === o.id);
+            return [o.id, own.length ? (r ? round(base + Number(r.priceDelta)) : null) : round(base + Number(o.priceDelta))];
+          })),
+        };
+      }),
+    };
+  }
+
+  /**
+   * Save full size prices per store. The store's price becomes its lowest size price (the price on the POS tile),
+   * and each size keeps the difference, so sales and the POS work as before.
+   */
+  async setSizePrices(id: string, dto: SetSizePricesDto) {
+    const product = await this.prisma.product.findUniqueOrThrow({ where: { id }, select: { sellPrice: true, name: true } });
+    const group = await this.sizeGroup(id);
+    if (!group) throw new BadRequestException(`${product.name} has no Size option group`);
+    const sizeIds = new Set(group.options.map((o) => o.id));
+    for (const s of dto.stores) {
+      if (s.prices.some((p) => !sizeIds.has(p.optionId))) throw new BadRequestException('Unknown size for this product');
+      if (!s.prices.some((p) => p.price !== null)) throw new BadRequestException('Give at least one size price for each store');
+    }
+    await this.prisma.$transaction(async (tx) => {
+      for (const s of dto.stores) {
+        const priced = s.prices.filter((p): p is { optionId: string; price: number } => p.price !== null);
+        const base = Math.min(...priced.map((p) => p.price));
+        const priceOverride = Math.abs(base - Number(product.sellPrice)) < 0.005 ? null : base;
+        const before = await tx.productOption.findMany({ where: { productId: id, storeId: s.storeId, option: { groupId: group.id } }, select: { optionId: true, isDefault: true } });
+        const wasDefault = before.find((b) => b.isDefault)?.optionId;
+        const defaultId = priced.some((p) => p.optionId === wasDefault) ? wasDefault : (group.options.find((o) => o.isDefault && priced.some((p) => p.optionId === o.id))?.id ?? priced[0].optionId);
+        // updatedAt changes, so the store's POS screens download the new prices
+        await tx.inventory.upsert({
+          where: { storeId_productId: { storeId: s.storeId, productId: id } },
+          update: { priceOverride, updatedAt: new Date() },
+          create: { storeId: s.storeId, productId: id, priceOverride, isListed: true },
+        });
+        await tx.productOption.deleteMany({ where: { productId: id, storeId: s.storeId, option: { groupId: group.id } } });
+        await tx.productOption.createMany({
+          data: priced.map((p) => ({ productId: id, storeId: s.storeId, optionId: p.optionId, priceDelta: Math.round((p.price - base) * 100) / 100, isDefault: p.optionId === defaultId })),
+        });
+      }
+    });
+    return this.sizePrices(id);
+  }
+
   async list(p: Principal, q: ProductQueryDto) {
     if (q.storeId) assertStoreAccess(p, q.storeId);
+    // a group (e.g. Beverages) also lists the products of its categories
+    const kids = q.categoryId ? await this.prisma.category.findMany({ where: { parentId: q.categoryId }, select: { id: true } }) : [];
     const where: Prisma.ProductWhereInput = {
-      categoryId: q.categoryId,
+      ...(q.categoryId && { categoryId: { in: [q.categoryId, ...kids.map((k) => k.id)] } }),
       ...(!q.includeInactive && { isActive: true }),
       ...(q.kind && { isIngredient: q.kind === 'ingredient' }),
       ...(q.storeId && q.listing === 'listed' && { inventory: { some: { storeId: q.storeId, isListed: true } } }),

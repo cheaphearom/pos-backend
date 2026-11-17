@@ -118,3 +118,26 @@ export class ProductQueryDto extends PageQueryDto {
   @IsOptional() @IsIn(['listed', 'unlisted', 'all'])
   listing?: 'listed' | 'unlisted' | 'all';
 }
+
+/** One size's full price in one store (null = this store does not offer the size) */
+export class SizePriceDto {
+  @IsUUID()
+  optionId: string;
+
+  @ValidateIf((_, v) => v !== null) @Type(() => Number) @IsNumber(money) @Min(0)
+  price: number | null;
+}
+
+export class StoreSizePricesDto {
+  @IsUUID()
+  storeId: string;
+
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @ValidateNested({ each: true }) @Type(() => SizePriceDto)
+  prices: SizePriceDto[];
+}
+
+/** Full prices per size (S / M / L) for each store */
+export class SetSizePricesDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => StoreSizePricesDto)
+  stores: StoreSizePricesDto[];
+}
