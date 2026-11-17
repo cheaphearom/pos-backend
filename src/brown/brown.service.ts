@@ -312,12 +312,19 @@ export class BrownService {
     }
 
     let response: unknown = dto.response;
-    if (!response) {
-      if (!brownStoreId) throw new BadRequestException('Enter the BROWN store id');
-      response = await this.fetchMenu(brownStoreId, dto.devKid!, dto.accessToken!, dto.dataEncryption, dto.apiUrl?.trim(), dto.username?.trim(), brownGroupIds(dto.groupIds));
+    let items: ReturnType<typeof parseBrownMenu>;
+    try {
+      if (!response) {
+        if (!brownStoreId) throw new BadRequestException('Enter the BROWN store id');
+        response = await this.fetchMenu(brownStoreId, dto.devKid!, dto.accessToken!, dto.dataEncryption, dto.apiUrl?.trim(), dto.username?.trim(), brownGroupIds(dto.groupIds));
+      }
+      items = parseBrownMenu(response);
+      if (!items.length) throw new UnprocessableEntityException(`The BROWN menu has no items for this store. ${describeMenu(response)}`);
+    } catch (e) {
+      // the reason, so `docker compose logs api` shows why a sync failed (messages never hold the token)
+      this.log.warn(`BROWN sync of store ${store.code} failed: ${(e as Error).message}`);
+      throw e;
     }
-    const items = parseBrownMenu(response);
-    if (!items.length) throw new UnprocessableEntityException(`The BROWN menu has no items for this store. ${describeMenu(response)}`);
 
     const result = await this.prisma.$transaction(
       async (tx) => {
@@ -536,7 +543,7 @@ export class BrownService {
           }
           job.running = false;
           job.finishedAt = new Date().toISOString();
-          this.log.log(`BROWN sync all: ${job.results.filter((r) => r.ok).length} of ${job.total} stores synced${job.stopped ? ' (stopped)' : ''}`);
+          this.log.log(`BROWN sync all: ${job.results.filter((r) => r.ok).length} of ${job.total} stores synced${job.stopped ? ` (${job.stopped})` : ''}`);
           onDone?.(job);
         })();
         return job;
