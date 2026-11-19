@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { PartialType } from '@nestjs/swagger';
 import { PurchaseOrderStatus } from '@prisma/client';
 import { Type } from 'class-transformer';

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { Prisma } from '@prisma/client';
 
 /** One product's own option in one store (from product_options). */

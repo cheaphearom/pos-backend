@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { crc16, generateKhqr, parseTlv, verifyKhqr } from './khqr';
 
 /** Valid KHQR strings from the official bakong-khqr SDK "valid" test suite. */

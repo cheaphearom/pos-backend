@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { createParamDecorator, ExecutionContext, SetMetadata } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { Principal } from './principal';

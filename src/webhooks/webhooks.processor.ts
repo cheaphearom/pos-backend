@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { createHmac, randomUUID } from 'crypto';

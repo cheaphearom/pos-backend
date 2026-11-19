@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { BadRequestException } from '@nestjs/common';
 import { EventEmitter } from 'events';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';

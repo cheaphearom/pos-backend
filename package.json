@@ -1,6 +1,8 @@
 {
   "name": "pos-backend",
   "version": "0.1.0",
+  "license": "UNLICENSED",
+  "author": "Chea Phearom",
   "private": true,
   "scripts": {
     "build": "nest build",

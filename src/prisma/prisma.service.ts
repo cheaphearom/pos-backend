@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { logEvent } from '../logging/logger';

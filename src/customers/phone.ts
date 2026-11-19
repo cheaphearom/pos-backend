@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 /**
  * One format for phone numbers so the same person is always found:
  * digits only, and Cambodia's +855 / 855 prefix becomes 0 ("+855 12 345 678" → "012345678").

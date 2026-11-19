@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 // End-to-end smoke test. Needs a running API with fresh seed data (npm run db:reset).
 // Webhook checks expect a receiver on http://localhost:4555 (optional).
 const B = process.env.API_URL ?? 'http://localhost:3000/api/v1';

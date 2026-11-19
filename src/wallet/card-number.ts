@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { randomInt } from 'crypto';
 
 /** Luhn check digit (the same check bank cards use, so typos are caught). */

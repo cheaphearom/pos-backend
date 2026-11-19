@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { OmitType, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsBoolean, IsInt, IsUUID, IsNumber, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';

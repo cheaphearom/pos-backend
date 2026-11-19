@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 /** Central, typed access to environment variables. */
 
 // Load apps/api/.env (variables already set, e.g. by Docker, are kept).

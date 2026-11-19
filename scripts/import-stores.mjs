@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 // Import stores (outlets) from a JSON file through the API, as a super admin.
 //
 //   API_URL=https://your-pos/api/v1  ADMIN_EMAIL=you@example.com  ADMIN_PASSWORD=...  node scripts/import-stores.mjs outlets.json

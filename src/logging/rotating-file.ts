@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { closeSync, createReadStream, createWriteStream, existsSync, mkdirSync, openSync, readdirSync, renameSync, statSync, unlinkSync, writeSync } from 'fs';
 import { basename, join } from 'path';
 import { pipeline } from 'stream';

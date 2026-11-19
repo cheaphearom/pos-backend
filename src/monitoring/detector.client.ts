@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { HttpException, Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { detectorConfig } from '../config';
 

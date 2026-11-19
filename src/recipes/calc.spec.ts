@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { ingredientUsage, usageCost } from './calc';
 
 const units: Record<string, string> = { beans: 'g', milk: 'ml', oat: 'ml', syrup: 'ml', cup12: 'pcs', cup16: 'pcs', lid: 'pcs', cream: 'g' };

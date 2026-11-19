@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 /** Events other systems can subscribe to. */
 export const WEBHOOK_EVENTS = [
   'sale.created',

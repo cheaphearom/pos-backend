@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { InjectQueue } from '@nestjs/bullmq';
 import { Controller, Get, HttpCode, Injectable, Module, OnModuleDestroy, OnModuleInit, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';

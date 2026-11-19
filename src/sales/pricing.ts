@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { Prisma } from '@prisma/client';
 
 const D = (v: Prisma.Decimal.Value) => new Prisma.Decimal(v);

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { ForbiddenException, Injectable } from '@nestjs/common';
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';

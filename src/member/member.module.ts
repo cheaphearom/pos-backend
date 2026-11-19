@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import {
   BadRequestException, Body, CanActivate, Controller, createParamDecorator, ExecutionContext, Get, HttpCode, Injectable, Logger, Module,
   Ip, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, ServiceUnavailableException, UnauthorizedException, UseGuards,
