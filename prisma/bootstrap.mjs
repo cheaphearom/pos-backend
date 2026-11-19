@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 // First start of a new server: create the super admin from ADMIN_EMAIL / ADMIN_PASSWORD
 // when the database has no users yet. Safe to run on every start (does nothing afterwards).
 // Demo data (prisma/seed.ts) is NOT loaded in production.

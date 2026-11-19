@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 /**
  * Demo data: 3 stores, staff for each role, 40 products, stock, customers.
  * Run: npm run db:seed   (safe to re-run; it upserts)

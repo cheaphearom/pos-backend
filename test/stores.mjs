@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 // Products per store, end to end. Needs a running API with fresh seed data (npm run db:reset), like smoke.mjs.
 const B = process.env.API_URL ?? 'http://localhost:3000/api/v1';
 let fails = 0; const ok = (c, m) => { console.log((c ? 'PASS ' : 'FAIL ') + m); if (!c) fails++; };

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { LoggerService } from '@nestjs/common';
 import { AsyncLocalStorage } from 'async_hooks';
 import pino, { Logger as Pino } from 'pino';

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { Injectable } from '@nestjs/common';
 import { assertStoreAccess, Principal } from '../common/principal';
 import { PrismaService } from '../prisma/prisma.service';

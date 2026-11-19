@@ -375,3 +375,9 @@ The POS has a development-only fault switch (`CHAOS_ENABLED=true`, refused in pr
 - When sales reach tens of millions of rows: partition `sales` and `sale_items` by month,
   and point the reports module at a read replica.
 
+
+## License
+
+Copyright (c) 2026 Chea Phearom. All rights reserved.
+
+This is proprietary software: no use, copying, changes or distribution without written permission. See [LICENSE](LICENSE). Third-party packages installed by npm keep their own licenses.

@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { randomUUID } from 'crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { logContext, writeLog } from './logger';

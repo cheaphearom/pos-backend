@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 /**
  * Ingredients used by one unit of a product, after its options are applied.
  * Order: base recipe → SCALE (size, sugar level) → REPLACE (oat milk) → ADD (extra shot).

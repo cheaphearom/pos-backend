@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 // Starter café menu through the API, as a super admin: categories, drink options (with how they change the recipe),
 // ingredients, 20 products with recipes, promotions, and staff accounts for a few stores.
 //

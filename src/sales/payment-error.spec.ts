@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { PAYMENT_ERROR } from './sales.service';
 
 describe('payment_failed vs sale_failed', () => {

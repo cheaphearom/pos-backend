@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { Fields } from '../logging/logger';
 
 const MAX_SAMPLES = 2000; // latency samples kept per minute (reservoir), enough for a stable p95

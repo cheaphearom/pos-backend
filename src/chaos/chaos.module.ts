@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { Body, CallHandler, Controller, Delete, ExecutionContext, Get, HttpCode, Injectable, Module, NestInterceptor, Post } from '@nestjs/common';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';

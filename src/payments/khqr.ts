@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 /**
  * KHQR (Cambodia's national QR payment standard, by the National Bank of Cambodia / Bakong).
  * KHQR is EMVCo "merchant presented QR": a list of TAG(2) LENGTH(2) VALUE fields

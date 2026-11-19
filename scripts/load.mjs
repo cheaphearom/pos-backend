@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 // Realistic till traffic for testing the monitoring and the anomaly detector.
 //
 //   node scripts/load.mjs --minutes 15

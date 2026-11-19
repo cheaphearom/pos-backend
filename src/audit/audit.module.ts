@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import {
   BadRequestException, Body, Controller, ForbiddenException, Get, Global, HttpCode, Injectable, Logger, Module, Post, Query,
 } from '@nestjs/common';

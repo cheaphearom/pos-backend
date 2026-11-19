@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { isValidCardNumber, luhnDigit, newCardNumber, newSerial, sameSerial } from './card-number';
 
 describe('wallet card numbers', () => {

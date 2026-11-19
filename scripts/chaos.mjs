@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 // Switch a test fault on or off (development only: the API must run with CHAOS_ENABLED=true).
 //
 //   node scripts/chaos.mjs DB_TIMEOUT --duration 120          slow queries + 40 % database errors for 2 min

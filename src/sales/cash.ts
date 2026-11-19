@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 /*
  * SHARED WITH THE FRONTEND: pos-frontend keeps an identical copy in src/shared/cash.ts.
  * Change both files together (pos-frontend: `npm run check:shared`), otherwise offline till totals

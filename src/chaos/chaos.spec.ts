@@ -1,3 +1,5 @@
+// Copyright (c) 2026 Chea Phearom. All rights reserved.
+// Proprietary and confidential: see the LICENSE file.
 import { Prisma } from '@prisma/client';
 import { spawnSync } from 'child_process';
 import { ChaosService, ServiceFailureError } from './chaos.service';
