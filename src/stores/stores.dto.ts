@@ -57,6 +57,20 @@ export class CreateStoreDto {
   @IsOptional() @IsBoolean()
   onlineOrdering?: boolean;
 
+  /** Print the slips by themselves after each sale (no Print button, no print window with QZ Tray) */
+  @IsOptional() @IsBoolean()
+  printAuto?: boolean;
+
+  /** Slips printed after a sale: the customer receipt, a cashier copy, a kitchen ticket (no prices) */
+  @IsOptional() @IsBoolean()
+  printCustomer?: boolean;
+
+  @IsOptional() @IsBoolean()
+  printCashierCopy?: boolean;
+
+  @IsOptional() @IsBoolean()
+  printKitchen?: boolean;
+
   /** Biggest manual discount (% of the sale) a cashier may give without a manager PIN */
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100)
   cashierMaxDiscountPercent?: number;

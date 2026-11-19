@@ -97,9 +97,14 @@ model Store {
   khqrBank         String? @map("khqr_bank") @db.VarChar(32) // acquiring bank name
 
   /// Café mode: orders get a queue number and go to the barista / kitchen screen
-  hasKitchen     Boolean @default(false) @map("has_kitchen")
+  hasKitchen       Boolean @default(false) @map("has_kitchen")
   /// Customers can order on their phone (pickup, or by scanning a table QR code)
-  onlineOrdering Boolean @default(false) @map("online_ordering")
+  onlineOrdering   Boolean @default(false) @map("online_ordering")
+  /// Printing after each sale: print without pressing Print, and which slips (a kitchen ticket goes to the kitchen printer)
+  printAuto        Boolean @default(false) @map("print_auto")
+  printCustomer    Boolean @default(true) @map("print_customer")
+  printCashierCopy Boolean @default(false) @map("print_cashier_copy")
+  printKitchen     Boolean @default(false) @map("print_kitchen")
 
   /// Cashier controls: biggest manual discount a cashier may give without a manager PIN (% of the sale)
   cashierMaxDiscountPercent Decimal @default(10) @map("cashier_max_discount_percent") @db.Decimal(5, 2)
