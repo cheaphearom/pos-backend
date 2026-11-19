@@ -21,6 +21,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { ProductsModule } from './products/products.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PromotionsModule } from './promotions/promotions.module';
+import { DisplayModule } from './display/display.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { WalletModule } from './wallet/wallet.module';
 import { CouponsModule } from './coupons/coupons.module';
@@ -64,6 +65,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ApiKeysModule,
     PurchasingModule,
     PromotionsModule,
+    DisplayModule,
     PaymentsModule,
     WalletModule,
     CouponsModule,
