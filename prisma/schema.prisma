@@ -124,6 +124,7 @@ model Store {
   shifts            Shift[]
   transfersOut      StockTransfer[]   @relation("TransferFrom")
   transfersIn       StockTransfer[]   @relation("TransferTo")
+  displaySlides     DisplaySlide[]
   apiKeys           ApiKey[]
   purchaseOrders    PurchaseOrder[]
   khqrPayments      KhqrPayment[]
@@ -1319,4 +1320,26 @@ model ZReport {
   @@unique([storeId, businessDay])
   @@unique([storeId, zNo])
   @@map("z_reports")
+}
+
+/// A picture shown on the customer display (right side during a sale), uploaded in the admin.
+model DisplaySlide {
+  id        String    @id @default(uuid()) @db.Uuid
+  /// null = every store
+  storeId   String?   @map("store_id") @db.Uuid
+  store     Store?    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  title     String    @db.VarChar(120)
+  mimeType  String    @map("mime_type") @db.VarChar(40)
+  image     Bytes
+  sizeBytes Int       @map("size_bytes")
+  sortOrder Int       @default(0) @map("sort_order")
+  isActive  Boolean   @default(true) @map("is_active")
+  /// optional period when it is shown
+  startsAt  DateTime? @map("starts_at")
+  endsAt    DateTime? @map("ends_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([storeId, isActive])
+  @@map("display_slides")
 }
