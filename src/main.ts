@@ -6,10 +6,13 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
+import { JwtService } from '@nestjs/jwt';
 import { AppModule } from './app.module';
+import { docsGate } from './auth/docs-access';
 import { config } from './config';
 import { accessLog } from './logging/access-log.middleware';
 import { JsonNestLogger } from './logging/logger';
+import { PrismaService } from './prisma/prisma.service';
 
 // BigInt ids (stock movements, loyalty history) are sent to clients as strings.
 (BigInt.prototype as any).toJSON = function () {
@@ -46,6 +49,8 @@ async function bootstrap() {
     .addBearerAuth()
     .addApiKey({ type: 'apiKey', name: 'X-API-Key', in: 'header' }, 'api-key')
     .build();
+  // Super admins only: see auth/docs-access.ts
+  app.use(docsGate(app.get(JwtService), app.get(PrismaService)));
   SwaggerModule.setup('docs', app, SwaggerModule.createDocument(app, doc), {
     swaggerOptions: { persistAuthorization: true },
   });
