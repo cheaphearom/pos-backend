@@ -122,6 +122,14 @@ export class CreateSaleDto {
    */
   @IsOptional() @IsDateString()
   offlineCreatedAt?: string;
+
+  /** Offline sales: the till that made it (its own id, see POST /tills/report) */
+  @IsOptional() @IsUUID()
+  tillId?: string;
+
+  /** Offline sales: the till's offline number for it (1, 2, 3…), printed as OFF-<till>-0001 */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100_000_000)
+  offlineSeq?: number;
 }
 
 export class RefundItemDto {

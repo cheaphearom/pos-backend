@@ -130,6 +130,7 @@ model Store {
   transfersOut      StockTransfer[]   @relation("TransferFrom")
   transfersIn       StockTransfer[]   @relation("TransferTo")
   displaySlides     DisplaySlide[]
+  tills             Till[]
   apiKeys           ApiKey[]
   purchaseOrders    PurchaseOrder[]
   khqrPayments      KhqrPayment[]
@@ -412,6 +413,9 @@ model Sale {
   id               String        @id @default(uuid()) @db.Uuid
   receiptNo        String        @unique @map("receipt_no") @db.VarChar(40)
   clientRef        String?       @unique @map("client_ref") @db.VarChar(64) // idempotency key (offline sync / integrations)
+  /// Offline sales: the till (POS computer) that made it, and its offline number there (OFF-<till>-0001…)
+  tillId           String?       @map("till_id") @db.Uuid
+  offlineSeq       Int?          @map("offline_seq")
   storeId          String        @map("store_id") @db.Uuid
   shiftId          String?       @map("shift_id") @db.Uuid
   cashierId        String?       @map("cashier_id") @db.Uuid // null when created by an integration
@@ -458,6 +462,7 @@ model Sale {
   @@index([shiftId])
   @@index([createdAt])
   @@index([storeId, kitchenStatus])
+  @@index([tillId, offlineSeq])
   @@map("sales")
 }
 
@@ -1234,6 +1239,7 @@ enum ApprovalAction {
   REFUND
   VOID
   CASH_OUT
+  DISCARD_OFFLINE // delete an offline sale waiting on a till
 }
 
 /// A manager typed their PIN on a cashier's POS. Used once, within a few minutes, for one action.
@@ -1347,4 +1353,52 @@ model DisplaySlide {
 
   @@index([storeId, isActive])
   @@map("display_slides")
+}
+
+// ─────────────────────────── Tills: offline sale numbers and checks ───────────────────────────
+
+/// A POS computer (browser). It numbers its offline sales 1, 2, 3… and reports, whenever it is online,
+/// how many numbers it has used and which sales still wait on it. Numbers that never arrive, are not waiting
+/// and were not deleted with a manager PIN are shown to managers as missing.
+model Till {
+  id            String    @id @db.Uuid // created by the till itself
+  code          String    @db.VarChar(8) // short name printed on offline receipts, e.g. 7K2F
+  storeId       String    @map("store_id") @db.Uuid
+  lastUserId    String?   @map("last_user_id") @db.Uuid
+  lastUserName  String?   @map("last_user_name") @db.VarChar(150)
+  lastSeenAt    DateTime  @map("last_seen_at")
+  /// Highest offline number the till has used
+  issuedSeq     Int       @default(0) @map("issued_seq")
+  /// Offline numbers still waiting on the till at its last report
+  waitingSeqs   Int[]     @default([]) @map("waiting_seqs")
+  waitingTotal  Decimal   @default(0) @map("waiting_total") @db.Decimal(14, 2)
+  /// Set when the till reported a lower number than before (its browser data was cleared or changed)
+  counterBackAt DateTime? @map("counter_back_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  store    Store            @relation(fields: [storeId], references: [id])
+  discards OfflineDiscard[]
+
+  @@index([storeId, lastSeenAt])
+  @@map("tills")
+}
+
+/// An offline sale deleted from a till's waiting list, with a manager PIN.
+model OfflineDiscard {
+  id           String   @id @default(uuid()) @db.Uuid
+  tillId       String   @map("till_id") @db.Uuid
+  storeId      String   @map("store_id") @db.Uuid
+  offlineSeq   Int?     @map("offline_seq")
+  clientRef    String   @unique @map("client_ref") @db.VarChar(64)
+  receiptNo    String   @map("receipt_no") @db.VarChar(40)
+  total        Decimal  @db.Decimal(14, 2)
+  reason       String   @db.VarChar(200)
+  userId       String   @map("user_id") @db.Uuid
+  approvedById String   @map("approved_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  till Till @relation(fields: [tillId], references: [id])
+
+  @@index([storeId, createdAt])
+  @@map("offline_discards")
 }

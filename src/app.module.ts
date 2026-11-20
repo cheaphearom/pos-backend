@@ -23,6 +23,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { PromotionsModule } from './promotions/promotions.module';
 import { DisplayModule } from './display/display.module';
 import { PrintModule } from './print/print.module';
+import { TillsModule } from './tills/tills.module';
 import { PurchasingModule } from './purchasing/purchasing.module';
 import { WalletModule } from './wallet/wallet.module';
 import { CouponsModule } from './coupons/coupons.module';
@@ -68,6 +69,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     PromotionsModule,
     DisplayModule,
     PrintModule,
+    TillsModule,
     PaymentsModule,
     WalletModule,
     CouponsModule,
