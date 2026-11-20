@@ -130,7 +130,7 @@ export class SetPinDto {
   pin: string;
 }
 
-export const ACTION_LABEL: Record<ApprovalAction, string> = { DISCOUNT: 'discount', REFUND: 'refund', VOID: 'void', CASH_OUT: 'cash out' };
+export const ACTION_LABEL: Record<ApprovalAction, string> = { DISCOUNT: 'discount', REFUND: 'refund', VOID: 'void', CASH_OUT: 'cash out', DISCARD_OFFLINE: 'deleting an offline sale' };
 
 @Injectable()
 export class ApprovalsService {
@@ -160,7 +160,7 @@ export class ApprovalsService {
     for (const m of managers) {
       if (await bcrypt.compare(dto.pin, m.approvalPinHash!)) { manager = m; break; }
     }
-    const what = `${ACTION_LABEL[dto.action]}${dto.action === 'DISCOUNT' ? ` ${dto.percent}%` : dto.action === 'CASH_OUT' ? ` ${dto.amount}` : ''}`;
+    const what = `${ACTION_LABEL[dto.action]}${dto.action === 'DISCOUNT' ? ` ${dto.percent}%` : (dto.action === 'CASH_OUT' || dto.action === 'DISCARD_OFFLINE') && dto.amount ? ` ${dto.amount}` : ''}`;
     if (!manager) {
       await this.audit.record(this.prisma, p, { action: 'APPROVAL_DENIED', storeId: dto.storeId, summary: `Wrong manager PIN for ${what}`, entityType: dto.saleId ? 'sale' : undefined, entityId: dto.saleId, details: { action: dto.action, percent: dto.percent } });
       const left = MAX_PIN_FAILS - recentFails - 1;

@@ -195,6 +195,7 @@ export class SalesService {
             data: {
               receiptNo,
               clientRef: dto.clientRef,
+              ...(offlineAt && dto.tillId && dto.offlineSeq && { tillId: dto.tillId, offlineSeq: dto.offlineSeq }),
               storeId: dto.storeId,
               shiftId: shift?.id,
               cashierId: userId,
