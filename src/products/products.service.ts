@@ -5,14 +5,33 @@ import { Prisma } from '@prisma/client';
 import { pageArgs, toPage } from '../common/pagination';
 import { assertStoreAccess, Principal } from '../common/principal';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateProductDto, ProductQueryDto, SetSizePricesDto, UpdateProductDto } from './products.dto';
+import { BulkPriceDto, CreateProductDto, ProductQueryDto, SetSizePricesDto, UpdateProductDto } from './products.dto';
+
+
+export interface BulkPriceRow {
+  productId: string; sku: string; name: string; sized: boolean; skipped?: string;
+  normal: { before: number; after: number } | null;
+  stores: { storeId: string; code: string; before?: number; after?: number; sizes?: { optionId: string; name: string; before: number | null; after: number | null }[] }[];
+}
+
+/** Rounds to the nearest step (0.05, 0.10, 0.25), or to cents. */
+export function roundTo(v: number, step?: number | null) {
+  const r = step ? Math.round(v / step) * step : v;
+  return Math.round(r * 100) / 100;
+}
+
+/** The new price: + / - a percent, + / - an amount, or a fixed price; then rounded. */
+export function changePrice(v: number, c: { type: 'PERCENT' | 'AMOUNT' | 'SET'; value: number }, step?: number | null) {
+  const n = c.type === 'PERCENT' ? v * (1 + c.value / 100) : c.type === 'AMOUNT' ? v + c.value : c.value;
+  return roundTo(n, step);
+}
 
 @Injectable()
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
   /** The product's size group (a drink option group named "Size"), with the sizes it uses */
-  private async sizeGroup(productId: string) {
+  async sizeGroup(productId: string) {
     const link = await this.prisma.productModifierGroup.findFirst({
       where: { productId, group: { name: { equals: 'Size', mode: 'insensitive' } } },
       select: { group: { select: { id: true, name: true, options: { where: { isActive: true }, orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }], select: { id: true, name: true, priceDelta: true, isDefault: true } } } } },
@@ -68,11 +87,16 @@ export class ProductsService {
       if (s.prices.some((p) => !sizeIds.has(p.optionId))) throw new BadRequestException('Unknown size for this product');
       if (!s.prices.some((p) => p.price !== null)) throw new BadRequestException('Give at least one size price for each store');
     }
-    await this.prisma.$transaction(async (tx) => {
-      for (const s of dto.stores) {
+    await this.prisma.$transaction((tx) => this.writeSizePrices(tx, id, Number(product.sellPrice), group, dto.stores));
+    return this.sizePrices(id);
+  }
+
+  /** Saves full size prices for some stores (smallest = the store's price, others as differences). Inside a transaction. */
+  async writeSizePrices(tx: Prisma.TransactionClient, id: string, sellPrice: number, group: { id: string; options: { id: string; isDefault: boolean }[] }, stores: { storeId: string; prices: { optionId: string; price: number | null }[] }[]) {
+      for (const s of stores) {
         const priced = s.prices.filter((p): p is { optionId: string; price: number } => p.price !== null);
         const base = Math.min(...priced.map((p) => p.price));
-        const priceOverride = Math.abs(base - Number(product.sellPrice)) < 0.005 ? null : base;
+        const priceOverride = Math.abs(base - sellPrice) < 0.005 ? null : base;
         const before = await tx.productOption.findMany({ where: { productId: id, storeId: s.storeId, option: { groupId: group.id } }, select: { optionId: true, isDefault: true } });
         const wasDefault = before.find((b) => b.isDefault)?.optionId;
         const defaultId = priced.some((p) => p.optionId === wasDefault) ? wasDefault : (group.options.find((o) => o.isDefault && priced.some((p) => p.optionId === o.id))?.id ?? priced[0].optionId);
@@ -87,8 +111,79 @@ export class ProductsService {
           data: priced.map((p) => ({ productId: id, storeId: s.storeId, optionId: p.optionId, priceDelta: Math.round((p.price - base) * 100) / 100, isDefault: p.optionId === defaultId })),
         });
       }
+  }
+
+  /**
+   * Bulk price change for ticked products. Preview (nothing saved) or apply (one transaction).
+   * ALL: the normal price, every store's own price and size prices. STORE: that store's price and size prices only.
+   * Drinks with sizes: %, $ and rounding apply to each size; "set" makes the smallest size that price and keeps the
+   * differences between sizes.
+   */
+  async bulkPrice(dto: BulkPriceDto, apply: boolean) {
+    if (dto.scope === 'STORE' && !dto.storeId) throw new BadRequestException('Choose the store');
+    const products = await this.prisma.product.findMany({
+      where: { id: { in: dto.productIds } },
+      select: { id: true, sku: true, name: true, sellPrice: true, isIngredient: true, inventory: { select: { storeId: true, priceOverride: true, isListed: true, store: { select: { code: true } } } } },
+      orderBy: { name: 'asc' },
     });
-    return this.sizePrices(id);
+    const f = (v: number) => changePrice(v, dto.change, dto.round);
+    const rows: BulkPriceRow[] = [];
+    for (const prod of products) {
+      const base: BulkPriceRow = { productId: prod.id, sku: prod.sku, name: prod.name, sized: false, normal: null, stores: [] };
+      if (prod.isIngredient) { rows.push({ ...base, skipped: 'Ingredient: no selling price' }); continue; }
+      const inv = prod.inventory.filter((i) => i.isListed && (dto.scope === 'ALL' || i.storeId === dto.storeId)).sort((a, b) => a.store.code.localeCompare(b.store.code));
+      if (!inv.length) { rows.push({ ...base, skipped: dto.scope === 'STORE' ? 'Not sold in this store' : 'Not sold in any store' }); continue; }
+      const oldNormal = Number(prod.sellPrice);
+      const newNormal = dto.scope === 'ALL' ? f(oldNormal) : oldNormal;
+      const group = await this.sizeGroup(prod.id);
+      const sp = group?.options.length ? await this.sizePrices(prod.id) : null;
+      const row: BulkPriceRow = { ...base, sized: !!sp, normal: dto.scope === 'ALL' ? { before: oldNormal, after: newNormal } : null };
+      for (const i of inv) {
+        if (sp) {
+          const cur = sp.stores.find((x) => x.storeId === i.storeId)?.prices ?? {};
+          const priced = Object.values(cur).filter((v): v is number => v !== null);
+          if (!priced.length) continue;
+          const shift = dto.change.type === 'SET' ? dto.change.value - Math.min(...priced) : 0;
+          row.stores.push({
+            storeId: i.storeId, code: i.store.code,
+            sizes: sp.sizes.map((z) => {
+              const before = cur[z.id] ?? null;
+              const after = before === null ? null : dto.change.type === 'SET' ? roundTo(before + shift, dto.round) : f(before);
+              return { optionId: z.id, name: z.name, before, after };
+            }),
+          });
+        } else {
+          const own = i.priceOverride === null ? null : Number(i.priceOverride);
+          const before = own ?? oldNormal;
+          const after = dto.scope === 'ALL' ? (own === null ? newNormal : f(own)) : f(before);
+          row.stores.push({ storeId: i.storeId, code: i.store.code, before, after });
+        }
+      }
+      rows.push(row);
+    }
+    const bad = rows.find((r) => r.normal && r.normal.after < 0 || r.stores.some((s) => (s.after ?? 0) < 0 || s.sizes?.some((z) => (z.after ?? 0) < 0)));
+    if (bad) throw new BadRequestException(`${bad.name} would get a price below $0`);
+    if (apply) {
+      await this.prisma.$transaction(async (tx) => {
+        for (const r of rows) {
+          if (r.skipped) continue;
+          const normal = r.normal?.after ?? Number(products.find((x) => x.id === r.productId)!.sellPrice);
+          if (r.normal && r.normal.after !== r.normal.before) await tx.product.update({ where: { id: r.productId }, data: { sellPrice: r.normal.after } });
+          if (r.sized) {
+            const group = (await this.sizeGroup(r.productId))!;
+            await this.writeSizePrices(tx, r.productId, normal, group, r.stores.map((s) => ({ storeId: s.storeId, prices: s.sizes!.map((z) => ({ optionId: z.optionId, price: z.after })) })));
+          } else {
+            for (const s of r.stores) {
+              await tx.inventory.update({
+                where: { storeId_productId: { storeId: s.storeId, productId: r.productId } },
+                data: { priceOverride: Math.abs(s.after! - normal) < 0.005 ? null : s.after },
+              });
+            }
+          }
+        }
+      }, { timeout: 120_000 });
+    }
+    return { applied: apply, changed: rows.filter((r) => !r.skipped).length, skipped: rows.filter((r) => r.skipped).length, rows };
   }
 
   async list(p: Principal, q: ProductQueryDto) {

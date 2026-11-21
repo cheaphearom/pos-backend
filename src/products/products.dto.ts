@@ -145,3 +145,31 @@ export class SetSizePricesDto {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(500) @ValidateNested({ each: true }) @Type(() => StoreSizePricesDto)
   stores: StoreSizePricesDto[];
 }
+
+export class PriceChangeDto {
+  /** PERCENT: +10 / -5 (%), AMOUNT: +0.25 / -0.10 ($), SET: the new price */
+  @IsIn(['PERCENT', 'AMOUNT', 'SET'])
+  type: 'PERCENT' | 'AMOUNT' | 'SET';
+
+  @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(-100000) @Max(100000)
+  value: number;
+}
+
+export class BulkPriceDto {
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(500) @IsUUID('all', { each: true })
+  productIds: string[];
+
+  /** ALL: normal price + every store's price and size prices. STORE: one store's prices only. */
+  @IsIn(['ALL', 'STORE'])
+  scope: 'ALL' | 'STORE';
+
+  @IsOptional() @IsUUID()
+  storeId?: string;
+
+  @ValidateNested() @Type(() => PriceChangeDto)
+  change: PriceChangeDto;
+
+  /** Round the results to this step: 0.05, 0.1 or 0.25 (empty = cents) */
+  @IsOptional() @Type(() => Number) @IsIn([0.05, 0.1, 0.25])
+  round?: number | null;
+}

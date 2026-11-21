@@ -9,7 +9,7 @@ import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { CurrentPrincipal, Public, Roles, Scopes } from '../common/decorators';
 import { Principal } from '../common/principal';
-import { BulkUpsertProductsDto, CreateProductDto, ProductQueryDto, SetSizePricesDto, UpdateProductDto } from './products.dto';
+import { BulkPriceDto, BulkUpsertProductsDto, CreateProductDto, ProductQueryDto, SetSizePricesDto, UpdateProductDto } from './products.dto';
 import { ProductsService } from './products.service';
 
 export const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
@@ -123,6 +123,42 @@ export class ProductsController {
   @Post()
   create(@Body() dto: CreateProductDto) {
     return this.products.create(dto);
+  }
+
+  /** Bulk price change: what would change (nothing is saved). */
+  @Roles(Role.SUPER_ADMIN)
+  @Scopes('products:write')
+  @Post('bulk-price/preview')
+  @HttpCode(200)
+  bulkPricePreview(@Body() dto: BulkPriceDto) {
+    return this.products.bulkPrice(dto, false);
+  }
+
+  /** Bulk price change: apply it (all products in one go) and record it in the audit log. */
+  @Roles(Role.SUPER_ADMIN)
+  @Scopes('products:write')
+  @Post('bulk-price')
+  @HttpCode(200)
+  async bulkPrice(@CurrentPrincipal() p: Principal, @Body() dto: BulkPriceDto) {
+    const out = await this.products.bulkPrice(dto, true);
+    const c = dto.change;
+    const sign = c.value > 0 ? '+' : '';
+    const what = c.type === 'PERCENT' ? `${sign}${c.value}%` : c.type === 'AMOUNT' ? `${sign}$${c.value}` : `set to $${c.value}`;
+    const where = dto.scope === 'ALL' ? 'all stores' : `store ${out.rows.find((r) => r.stores[0])?.stores[0]?.code ?? ''}`;
+    this.audit.add(p, {
+      action: 'PRODUCT_PRICES_BULK', entityType: 'product', storeId: dto.scope === 'STORE' ? dto.storeId : undefined,
+      summary: `Prices ${what}${dto.round ? `, rounded to ${dto.round}` : ''} in ${where}: ${out.changed} product(s)${out.skipped ? `, ${out.skipped} skipped` : ''}`,
+      details: out.rows.filter((r) => !r.skipped).slice(0, 100).map((r) => ({
+        sku: r.sku,
+        normal: r.normal ? `${r.normal.before} -> ${r.normal.after}` : undefined,
+        stores: r.stores
+          .map((st) => (st.sizes
+            ? `${st.code}: ${st.sizes.filter((z) => z.before !== null).map((z) => `${z.name} ${z.before}->${z.after}`).join(', ')}`
+            : `${st.code}: ${st.before}->${st.after}`))
+          .join(' | '),
+      })),
+    });
+    return out;
   }
 
   /** Create or update up to 1000 products at once, matched by SKU. */
