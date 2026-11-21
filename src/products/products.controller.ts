@@ -11,6 +11,7 @@ import { CurrentPrincipal, Public, Roles, Scopes } from '../common/decorators';
 import { Principal } from '../common/principal';
 import { BulkPriceDto, BulkUpsertProductsDto, CreateProductDto, ProductQueryDto, SetSizePricesDto, UpdateProductDto } from './products.dto';
 import { ProductsService } from './products.service';
+import { priceChangeLabel, PriceScheduleService, SchedulePriceDto } from './price-schedule';
 
 export const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
 
@@ -23,6 +24,7 @@ export class ProductsController {
     private readonly products: ProductsService,
     private readonly audit: AuditService,
     private readonly prisma: PrismaService,
+    private readonly schedules: PriceScheduleService,
   ) {}
 
   /**
@@ -112,6 +114,14 @@ export class ProductsController {
     return out;
   }
 
+  /** Scheduled price changes: waiting, done, failed and cancelled (latest 100). */
+  @Roles(Role.SUPER_ADMIN)
+  @Scopes('products:read')
+  @Get('price-schedules')
+  priceSchedules() {
+    return this.schedules.list();
+  }
+
   @Scopes('products:read')
   @Get(':id')
   get(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Query('storeId') storeId?: string) {
@@ -141,13 +151,10 @@ export class ProductsController {
   @HttpCode(200)
   async bulkPrice(@CurrentPrincipal() p: Principal, @Body() dto: BulkPriceDto) {
     const out = await this.products.bulkPrice(dto, true);
-    const c = dto.change;
-    const sign = c.value > 0 ? '+' : '';
-    const what = c.type === 'PERCENT' ? `${sign}${c.value}%` : c.type === 'AMOUNT' ? `${sign}$${c.value}` : `set to $${c.value}`;
-    const where = dto.scope === 'ALL' ? 'all stores' : `store ${out.rows.find((r) => r.stores[0])?.stores[0]?.code ?? ''}`;
+    const label = priceChangeLabel(dto, out.rows.find((r) => r.stores[0])?.stores[0]?.code);
     this.audit.add(p, {
       action: 'PRODUCT_PRICES_BULK', entityType: 'product', storeId: dto.scope === 'STORE' ? dto.storeId : undefined,
-      summary: `Prices ${what}${dto.round ? `, rounded to ${dto.round}` : ''} in ${where}: ${out.changed} product(s)${out.skipped ? `, ${out.skipped} skipped` : ''}`,
+      summary: `Prices ${label}: ${out.changed} product(s)${out.skipped ? `, ${out.skipped} skipped` : ''}`,
       details: out.rows.filter((r) => !r.skipped).slice(0, 100).map((r) => ({
         sku: r.sku,
         normal: r.normal ? `${r.normal.before} -> ${r.normal.after}` : undefined,
@@ -159,6 +166,22 @@ export class ProductsController {
       })),
     });
     return out;
+  }
+
+  /** Schedule a bulk price change for later (applied by the server at runAt). */
+  @Roles(Role.SUPER_ADMIN)
+  @Scopes('products:write')
+  @Post('bulk-price/schedule')
+  schedulePrices(@CurrentPrincipal() p: Principal, @Body() dto: SchedulePriceDto) {
+    return this.schedules.create(p, dto);
+  }
+
+  @Roles(Role.SUPER_ADMIN)
+  @Scopes('products:write')
+  @Post('price-schedules/:id/cancel')
+  @HttpCode(200)
+  cancelPriceSchedule(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    return this.schedules.cancel(p, id);
   }
 
   /** Create or update up to 1000 products at once, matched by SKU. */
