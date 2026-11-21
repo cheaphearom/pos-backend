@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { pageArgs, toPage } from '../common/pagination';
 import { assertStoreAccess, Principal } from '../common/principal';
 import { PrismaService } from '../prisma/prisma.service';
+import { PriceHistoryService, PriceMeta } from '../prices/price-history.module';
 import { BulkPriceDto, CreateProductDto, ProductQueryDto, SetSizePricesDto, UpdateProductDto } from './products.dto';
 
 
@@ -28,7 +29,10 @@ export function changePrice(v: number, c: { type: 'PERCENT' | 'AMOUNT' | 'SET'; 
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly history: PriceHistoryService,
+  ) {}
 
   /** The product's size group (a drink option group named "Size"), with the sizes it uses */
   async sizeGroup(productId: string) {
@@ -119,7 +123,7 @@ export class ProductsService {
    * Drinks with sizes: %, $ and rounding apply to each size; "set" makes the smallest size that price and keeps the
    * differences between sizes.
    */
-  async bulkPrice(dto: BulkPriceDto, apply: boolean) {
+  async bulkPrice(dto: BulkPriceDto, apply: boolean, meta: PriceMeta = { source: 'BULK' }) {
     if (dto.scope === 'STORE' && !dto.storeId) throw new BadRequestException('Choose the store');
     const products = await this.prisma.product.findMany({
       where: { id: { in: dto.productIds } },
@@ -164,6 +168,8 @@ export class ProductsService {
     const bad = rows.find((r) => r.normal && r.normal.after < 0 || r.stores.some((s) => (s.after ?? 0) < 0 || s.sizes?.some((z) => (z.after ?? 0) < 0)));
     if (bad) throw new BadRequestException(`${bad.name} would get a price below $0`);
     if (apply) {
+      const changedIds = rows.filter((r) => !r.skipped).map((r) => r.productId);
+      const before = await this.history.snapshot(changedIds);
       await this.prisma.$transaction(async (tx) => {
         for (const r of rows) {
           if (r.skipped) continue;
@@ -182,6 +188,7 @@ export class ProductsService {
           }
         }
       }, { timeout: 120_000 });
+      await this.history.record(before, await this.history.snapshot(changedIds), meta);
     }
     return { applied: apply, changed: rows.filter((r) => !r.skipped).length, skipped: rows.filter((r) => r.skipped).length, rows };
   }

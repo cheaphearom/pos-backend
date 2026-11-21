@@ -12,6 +12,7 @@ import { Principal } from '../common/principal';
 import { BulkPriceDto, BulkUpsertProductsDto, CreateProductDto, ProductQueryDto, SetSizePricesDto, UpdateProductDto } from './products.dto';
 import { ProductsService } from './products.service';
 import { priceChangeLabel, PriceScheduleService, SchedulePriceDto } from './price-schedule';
+import { metaOf, PriceHistoryService } from '../prices/price-history.module';
 
 export const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
 
@@ -25,6 +26,7 @@ export class ProductsController {
     private readonly audit: AuditService,
     private readonly prisma: PrismaService,
     private readonly schedules: PriceScheduleService,
+    private readonly history: PriceHistoryService,
   ) {}
 
   /**
@@ -107,7 +109,7 @@ export class ProductsController {
   @Scopes('products:write')
   @Put(':id/size-prices')
   async setSizePrices(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: SetSizePricesDto) {
-    const out = await this.products.setSizePrices(id, dto);
+    const out = await this.history.track([id], metaOf(p, 'SIZE_PRICES'), () => this.products.setSizePrices(id, dto));
     const product = await this.products.get(p, id).catch(() => null);
     this.audit.add(p, { action: 'PRODUCT_SIZE_PRICES_CHANGED', entityType: 'product', entityId: product?.sku ?? id,
       summary: `${product?.name ?? 'Product'}: size prices changed in ${dto.stores.length} store(s)` });
@@ -131,8 +133,10 @@ export class ProductsController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Post()
-  create(@Body() dto: CreateProductDto) {
-    return this.products.create(dto);
+  async create(@CurrentPrincipal() p: Principal, @Body() dto: CreateProductDto) {
+    const out = await this.products.create(dto);
+    await this.history.record(new Map(), await this.history.snapshot([out.id]), metaOf(p, 'CREATE'), true);
+    return out;
   }
 
   /** Bulk price change: what would change (nothing is saved). */
@@ -150,7 +154,8 @@ export class ProductsController {
   @Post('bulk-price')
   @HttpCode(200)
   async bulkPrice(@CurrentPrincipal() p: Principal, @Body() dto: BulkPriceDto) {
-    const out = await this.products.bulkPrice(dto, true);
+    const code = dto.scope === 'STORE' && dto.storeId ? (await this.prisma.store.findUnique({ where: { id: dto.storeId }, select: { code: true } }))?.code : undefined;
+    const out = await this.products.bulkPrice(dto, true, metaOf(p, 'BULK', priceChangeLabel(dto, code)));
     const label = priceChangeLabel(dto, out.rows.find((r) => r.stores[0])?.stores[0]?.code);
     this.audit.add(p, {
       action: 'PRODUCT_PRICES_BULK', entityType: 'product', storeId: dto.scope === 'STORE' ? dto.storeId : undefined,
@@ -188,8 +193,8 @@ export class ProductsController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Post('bulk')
-  bulk(@Body() dto: BulkUpsertProductsDto) {
-    return this.products.bulkUpsert(dto.products);
+  bulk(@CurrentPrincipal() p: Principal, @Body() dto: BulkUpsertProductsDto) {
+    return this.history.track(null, metaOf(p, 'IMPORT'), () => this.products.bulkUpsert(dto.products));
   }
 
   @Roles(Role.SUPER_ADMIN)
@@ -197,7 +202,7 @@ export class ProductsController {
   @Patch(':id')
   async update(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateProductDto) {
     const before = await this.products.get(p, id).catch(() => null);
-    const after = await this.products.update(id, dto);
+    const after = await this.history.track([id], metaOf(p, 'EDIT'), () => this.products.update(id, dto));
     if (before) {
       const changes = (['sellPrice', 'costPrice', 'isActive', 'taxable'] as const)
         .filter((k) => dto[k] !== undefined && String((before as any)[k]) !== String((after as any)[k]))

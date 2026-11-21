@@ -131,6 +131,7 @@ model Store {
   transfersIn       StockTransfer[]   @relation("TransferTo")
   displaySlides     DisplaySlide[]
   tills             Till[]
+  priceChanges      PriceChange[]
   apiKeys           ApiKey[]
   purchaseOrders    PurchaseOrder[]
   khqrPayments      KhqrPayment[]
@@ -254,6 +255,7 @@ model Product {
   productionBatches ProductionBatch[]
   wasteEntries      WasteEntry[]
   photo             ProductPhoto?
+  priceChanges      PriceChange[]
 
   @@index([categoryId])
   @@index([name])
@@ -1451,4 +1453,32 @@ model PriceSchedule {
 
   @@index([status, runAt])
   @@map("price_schedules")
+}
+
+/// Every change to a price customers pay: the normal price, a store's price, or a size price in a store.
+/// Recorded by comparing prices before and after each change (edit, bulk, scheduled, BROWN sync, import…).
+model PriceChange {
+  id        BigInt   @id @default(autoincrement())
+  productId String   @map("product_id") @db.Uuid
+  /// null = the normal price (all stores without their own)
+  storeId   String?  @map("store_id") @db.Uuid
+  /// Drinks with sizes: the size
+  optionId  String?  @map("option_id") @db.Uuid
+  sizeName  String?  @map("size_name") @db.VarChar(60)
+  /// null when the product was created
+  oldPrice  Decimal? @map("old_price") @db.Decimal(14, 2)
+  newPrice  Decimal  @map("new_price") @db.Decimal(14, 2)
+  /// CREATE, EDIT, STORE_PRICE, SIZE_PRICES, BULK, SCHEDULED, BROWN_SYNC, IMPORT
+  source    String   @db.VarChar(30)
+  userId    String?  @map("user_id") @db.Uuid
+  userName  String?  @map("user_name") @db.VarChar(150)
+  note      String?  @db.VarChar(200)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  store   Store?  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  @@index([productId, createdAt])
+  @@index([createdAt])
+  @@map("price_changes")
 }

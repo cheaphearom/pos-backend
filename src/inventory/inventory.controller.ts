@@ -9,6 +9,8 @@ import { Principal } from '../common/principal';
 import { AdjustStockDto, CreateTransferDto, InventoryQueryDto, MovementQueryDto, TransferQueryDto, UpdateInventoryDto } from './inventory.dto';
 import { InventoryService } from './inventory.service';
 
+import { metaOf, PriceHistoryService } from '../prices/price-history.module';
+
 @ApiTags('Inventory')
 @ApiBearerAuth()
 @ApiSecurity('api-key')
@@ -17,6 +19,7 @@ export class InventoryController {
   constructor(
     private readonly inventory: InventoryService,
     private readonly audit: AuditService,
+    private readonly history: PriceHistoryService,
   ) {}
 
   /** Stock levels of a store. Use lowStock=true for the reorder list. */
@@ -56,7 +59,9 @@ export class InventoryController {
     @Param('productId', ParseUUIDPipe) productId: string,
     @Body() dto: UpdateInventoryDto,
   ) {
-    return this.inventory.update(p, storeId, productId, dto);
+    // its price, or whether the store sells it, can change what customers pay there
+    if (dto.priceOverride === undefined && dto.isListed === undefined) return this.inventory.update(p, storeId, productId, dto);
+    return this.history.track([productId], metaOf(p, 'STORE_PRICE'), () => this.inventory.update(p, storeId, productId, dto));
   }
 }
 
