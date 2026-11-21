@@ -2,7 +2,7 @@
 // Proprietary and confidential: see the LICENSE file.
 import { OmitType, PartialType } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUrl, IsUUID, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
 import { PageQueryDto } from '../common/pagination';
 
 const money = { maxDecimalPlaces: 2 };
@@ -74,7 +74,9 @@ export class CreateProductDto {
   shelfLifeHours?: number | null;
 
   /** Picture shown on the POS tile and online menu */
-  @IsOptional() @ValidateIf((_, v) => v !== null && v !== '') @IsUrl({ require_tld: false })
+  @IsOptional() @ValidateIf((_, v) => v !== null && v !== '')
+  @Matches(/^(https?:\/\/\S+|\/api\/v1\/products\/[0-9a-f-]{36}\/image(\?v=\d+)?)$/i, { message: 'imageUrl must be a web address (https://…) or an uploaded photo' })
+  @MaxLength(1000)
   imageUrl?: string | null;
 
   /** Drink options (Size, Sugar...) offered for this product, in order */

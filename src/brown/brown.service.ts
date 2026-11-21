@@ -401,7 +401,8 @@ export class BrownService {
           if (!p) continue;
           const data = {
             ...(p.name !== i.name && { name: i.name }),
-            ...(i.imageUrl && p.imageUrl !== i.imageUrl && { imageUrl: i.imageUrl }),
+            // a photo uploaded in the portal (kept on this server) is not replaced by BROWN's picture
+            ...(i.imageUrl && p.imageUrl !== i.imageUrl && !p.imageUrl?.startsWith('/api/v1/products/') && { imageUrl: i.imageUrl }),
             ...(p.categoryId !== catOf(i) && { categoryId: catOf(i) }),
           };
           if (Object.keys(data).length) {
