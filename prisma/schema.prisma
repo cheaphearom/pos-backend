@@ -253,10 +253,25 @@ model Product {
   poItems           PurchaseOrderItem[]
   productionBatches ProductionBatch[]
   wasteEntries      WasteEntry[]
+  photo             ProductPhoto?
 
   @@index([categoryId])
   @@index([name])
   @@map("products")
+}
+
+/// A product's photo uploaded in the admin portal (shown on POS tiles and the online menu).
+/// The product's imageUrl then points to /api/v1/products/<id>/image?v=<time>.
+model ProductPhoto {
+  productId String   @id @map("product_id") @db.Uuid
+  mimeType  String   @map("mime_type") @db.VarChar(40)
+  image     Bytes
+  sizeBytes Int      @map("size_bytes")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("product_photos")
 }
 
 /// One product in one store: whether the store sells it, its stock level and optional own price.
