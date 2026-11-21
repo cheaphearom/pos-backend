@@ -112,7 +112,7 @@ export class PriceScheduleService implements OnModuleInit, OnModuleDestroy {
         const claimed = await this.prisma.priceSchedule.updateMany({ where: { id: s.id, status: 'PENDING' }, data: { status: 'RUNNING', startedAt: new Date() } });
         if (!claimed.count) continue;
         try {
-          const out = await this.products.bulkPrice(s.request as unknown as BulkPriceDto, true);
+          const out = await this.products.bulkPrice(s.request as unknown as BulkPriceDto, true, { source: 'SCHEDULED', userId: s.createdById, userName: s.createdByName, note: s.label });
           await this.prisma.priceSchedule.update({ where: { id: s.id }, data: { status: 'DONE', appliedAt: new Date(), result: { changed: out.changed, skipped: out.skipped } } });
           this.audit.add(null, {
             action: 'PRODUCT_PRICES_BULK', entityType: 'price_schedule', entityId: s.id, storeId: (s.request as any)?.scope === 'STORE' ? (s.request as any).storeId : undefined,

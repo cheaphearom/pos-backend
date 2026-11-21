@@ -5,6 +5,7 @@ import { Prisma } from '@prisma/client';
 import { createHmac, randomUUID } from 'node:crypto';
 import { brownConfig } from '../config';
 import { PrismaService } from '../prisma/prisma.service';
+import { PriceHistoryService } from '../prices/price-history.module';
 import { BrownSyncDto } from './brown.dto';
 
 /** One menu item, as the POS needs it */
@@ -214,7 +215,10 @@ export class BrownService {
   private readonly log = new Logger('BrownSync');
   /** Recent "sync all stores" runs (in memory; the last 5) */
   private readonly jobs = new Map<string, BrownSyncAllJob>();
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly history: PriceHistoryService,
+  ) {}
 
   /** The address used when the Sync dialog leaves API URL empty. */
   settings() {
@@ -359,7 +363,13 @@ export class BrownService {
   }
 
   /** Adds new items, updates existing ones (same SKU), and lists all of them in the store. */
+  /** Sync one store's menu, recording every price it changes. */
   async sync(storeId: string, dto: BrownSyncDto): Promise<BrownSyncResult> {
+    const store = await this.prisma.store.findUnique({ where: { id: storeId }, select: { code: true } });
+    return this.history.track(null, { source: 'BROWN_SYNC', userName: 'BROWN sync', note: `menu of ${store?.code ?? 'store'}` }, () => this.syncMenu(storeId, dto));
+  }
+
+  private async syncMenu(storeId: string, dto: BrownSyncDto): Promise<BrownSyncResult> {
     const store = await this.prisma.store.findUniqueOrThrow({ where: { id: storeId }, select: { id: true, code: true, externalId: true } });
     const brownStoreId = dto.brownStoreId?.trim() || store.externalId;
     if (brownStoreId && brownStoreId !== store.externalId) {
