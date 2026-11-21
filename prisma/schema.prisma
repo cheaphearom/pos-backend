@@ -1417,3 +1417,38 @@ model OfflineDiscard {
   @@index([storeId, createdAt])
   @@map("offline_discards")
 }
+
+// ─────────────────────────── Scheduled price changes ───────────────────────────
+
+enum PriceScheduleStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+  CANCELLED
+}
+
+/// A bulk price change saved to run later (e.g. new prices from 1 December). The server applies it at runAt,
+/// working from the prices at that moment.
+model PriceSchedule {
+  id            String              @id @default(uuid()) @db.Uuid
+  runAt         DateTime            @map("run_at")
+  status        PriceScheduleStatus @default(PENDING)
+  /// The bulk price change: productIds, scope, storeId, change, round
+  request       Json
+  /// Short description, e.g. "+10%, rounded to 0.05, all stores"
+  label         String              @db.VarChar(200)
+  productCount  Int                 @map("product_count")
+  createdById   String              @map("created_by_id") @db.Uuid
+  createdByName String              @map("created_by_name") @db.VarChar(150)
+  createdAt     DateTime            @default(now()) @map("created_at")
+  startedAt     DateTime?           @map("started_at")
+  appliedAt     DateTime?           @map("applied_at")
+  /// After running: { changed, skipped }
+  result        Json?
+  error         String?             @db.VarChar(500)
+  cancelledBy   String?             @map("cancelled_by") @db.VarChar(150)
+
+  @@index([status, runAt])
+  @@map("price_schedules")
+}
