@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
 import { OrderType, PaymentMethod, SaleStatus } from '@prisma/client';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsDateString, IsEnum, IsIn, Matches, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 import { DateRangeQueryDto } from '../common/date-range';
 
@@ -185,7 +185,12 @@ export class SaleQueryDto extends DateRangeQueryDto {
   @IsOptional() @IsUUID()
   shiftId?: string;
 
-  /** Receipt number (partial match) */
-  @IsOptional() @IsString()
+  /** Receipt number (partial match), or an offline number: OFF-7K2F-0002, OFF-7K2F (one till), OFF (all offline) */
+  @IsOptional() @IsString() @MaxLength(60)
   search?: string;
+
+  /** Only sales made offline (numbered on a till) */
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  @IsBoolean()
+  offline?: boolean;
 }

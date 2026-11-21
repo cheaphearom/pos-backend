@@ -11,6 +11,7 @@ import { assertStoreAccess, Principal, storeScope, userIdOf } from '../common/pr
 import { InventoryService } from '../inventory/inventory.service';
 import { MovementResult, StockService } from '../inventory/stock.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { tillCode } from '../tills/tills.module';
 import { WebhooksService } from '../webhooks/webhooks.service';
 import { priceSale, PricingError } from './pricing';
 import { applyPromotions } from '../promotions/engine';
@@ -39,6 +40,12 @@ const receiptInclude = {
   payments: true,
   refunds: { include: { items: true } },
 } satisfies Prisma.SaleInclude;
+
+
+/** The number printed on the till's offline receipt (OFF-7K2F-0002), for sales made offline. */
+export const offlineNo = (s: { tillId?: string | null; offlineSeq?: number | null }) =>
+  s.tillId && s.offlineSeq ? `OFF-${tillCode(s.tillId)}-${String(s.offlineSeq).padStart(4, '0')}` : null;
+const withOfflineNo = <T extends { tillId?: string | null; offlineSeq?: number | null }>(s: T) => ({ ...s, offlineNo: offlineNo(s) });
 
 @Injectable()
 export class SalesService {
@@ -463,7 +470,8 @@ export class SalesService {
       cashierId: q.cashierId,
       shiftId: q.shiftId,
       createdAt: dateFilter(q.from, q.to),
-      ...(q.search && { receiptNo: { contains: q.search, mode: 'insensitive' } }),
+      ...(q.offline && { tillId: { not: null }, offlineSeq: { not: null } }),
+      ...(q.search && (await this.searchWhere(q.search.trim()))),
     };
     const [rows, total] = await Promise.all([
       this.prisma.sale.findMany({
@@ -479,7 +487,25 @@ export class SalesService {
       }),
       this.prisma.sale.count({ where }),
     ]);
-    return toPage(rows, total, q);
+    return toPage(rows.map(withOfflineNo), total, q);
+  }
+
+  /**
+   * Search text: a receipt number (partial), or an offline number printed on the till's receipt:
+   * "OFF-7K2F-0002" (that sale), "OFF-7K2F" (all from that till), "OFF" (all offline sales).
+   */
+  private async searchWhere(text: string): Promise<Prisma.SaleWhereInput> {
+    const m = /^OFF(?:-([0-9A-F]{1,4}))?(?:-0*(\d{1,9}))?-?$/i.exec(text.replace(/\s+/g, ''));
+    if (!m) return { receiptNo: { contains: text, mode: 'insensitive' } };
+    const code = m[1]?.toUpperCase();
+    const seq = m[2] ? Number(m[2]) : undefined;
+    let tillIds: string[] | undefined;
+    if (code) {
+      // the till code is the start of the till id: match it against the tills that have offline sales
+      const tills = await this.prisma.sale.findMany({ where: { tillId: { not: null } }, distinct: ['tillId'], select: { tillId: true } });
+      tillIds = tills.map((t) => t.tillId!).filter((id) => tillCode(id).startsWith(code));
+    }
+    return { tillId: tillIds ? { in: tillIds } : { not: null }, offlineSeq: seq ?? { not: null } };
   }
 
   /** Full receipt by sale id or receipt number. */
@@ -491,7 +517,7 @@ export class SalesService {
     });
     if (!sale) throw new NotFoundException('Sale not found');
     assertStoreAccess(p, sale.storeId);
-    return sale;
+    return withOfflineNo(sale);
   }
 
   /** Refund some or all items of a sale. Money, points and stock are reversed proportionally. */
