@@ -2,7 +2,20 @@
 // Proprietary and confidential: see the LICENSE file.
 import { OmitType, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsInt, IsUUID, IsNumber, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, ValidateIf } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsInt, IsUUID, IsNumber, IsOptional, IsString, Length, Matches, Max, MaxLength, Min, ValidateIf, ValidateNested } from 'class-validator';
+
+/** A place that prepares some categories (Bar, Kitchen…): its own kitchen ticket, on its own printer at each till. */
+export class KitchenStationDto {
+  @Matches(/^[A-Za-z0-9-]{1,40}$/, { message: 'station id: 1-40 letters, digits or dashes' })
+  id: string;
+
+  @IsString() @Length(1, 30)
+  name: string;
+
+  /** Categories it prepares (their sub-categories too) */
+  @IsArray() @ArrayMaxSize(300) @ArrayUnique() @IsUUID('all', { each: true })
+  categoryIds: string[];
+}
 
 export class CreateStoreDto {
   /** Short unique code used in receipt numbers, e.g. PP01 */
@@ -70,6 +83,10 @@ export class CreateStoreDto {
 
   @IsOptional() @IsBoolean()
   printKitchen?: boolean;
+
+  /** Kitchen tickets per station, by category. Empty = one kitchen ticket with every item. */
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => KitchenStationDto)
+  kitchenStations?: KitchenStationDto[];
 
   /** Biggest manual discount (% of the sale) a cashier may give without a manager PIN */
   @IsOptional() @Type(() => Number) @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) @Max(100)
