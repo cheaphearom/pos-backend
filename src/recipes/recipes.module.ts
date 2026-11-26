@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { BadRequestException, Body, Controller, Get, Global, Injectable, Module, Param, ParseUUIDPipe, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Prisma, RecipeEffectType, Role } from '@prisma/client';
@@ -198,6 +199,7 @@ export class RecipesController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Put(':productId')
+  @Audit('RECIPE_CHANGED', ({ params, body, before }) => ({ entityType: 'product', entityId: params.productId, summary: `Recipe of ${before?.name ?? 'a product'}: ${(body?.items ?? []).length} ingredient(s)`, details: safeBody(body) }), (db, c) => db.product.findUnique({ where: { id: c.params.productId }, select: { name: true } }))
   save(@Param('productId', ParseUUIDPipe) id: string, @Body() dto: SaveRecipeDto) {
     return this.recipes.saveRecipe(id, dto.items);
   }
@@ -206,6 +208,7 @@ export class RecipesController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Put('options/:optionId/effects')
+  @Audit('RECIPE_OPTION_CHANGED', ({ params, body, before }) => ({ entityType: 'modifier_option', entityId: params.optionId, summary: `Ingredients of the option "${before?.name ?? params.optionId}": ${(body?.effects ?? []).length} change(s)`, details: safeBody(body) }), (db, c) => db.modifierOption.findUnique({ where: { id: c.params.optionId }, select: { name: true } }))
   effects(@Param('optionId', ParseUUIDPipe) id: string, @Body() dto: SaveEffectsDto) {
     return this.recipes.saveEffects(id, dto.effects);
   }

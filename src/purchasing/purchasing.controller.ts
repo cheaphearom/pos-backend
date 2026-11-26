@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -30,12 +31,14 @@ export class SuppliersController {
 
   @Scopes('purchasing:write')
   @Post()
+  @Audit('SUPPLIER_CREATED', ({ result: r }) => ({ entityType: 'supplier', entityId: r?.code, summary: `Supplier ${r?.code} ${r?.name} created` }))
   create(@Body() dto: CreateSupplierDto) {
     return this.purchasing.createSupplier(dto);
   }
 
   @Scopes('purchasing:write')
   @Patch(':id')
+  @Audit('SUPPLIER_CHANGED', ({ result: r, body }) => ({ entityType: 'supplier', entityId: r?.code, summary: `Supplier ${r?.code} ${r?.name}: ${fieldsOf(body)}`, details: safeBody(body) }))
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateSupplierDto) {
     return this.purchasing.updateSupplier(id, dto);
   }
@@ -71,12 +74,14 @@ export class PurchaseOrdersController {
   /** Create a draft order. */
   @Scopes('purchasing:write')
   @Post()
+  @Audit('PO_CREATED', ({ result: r }) => ({ entityType: 'purchase_order', entityId: r?.poNo, storeId: r?.storeId, summary: `Purchase order ${r?.poNo} created${r?.supplier?.name ? ` for ${r.supplier.name}` : ''}` }))
   create(@CurrentPrincipal() p: Principal, @Body() dto: CreatePurchaseOrderDto) {
     return this.purchasing.create(p, dto);
   }
 
   @Scopes('purchasing:write')
   @Patch(':id')
+  @Audit('PO_CHANGED', ({ result: r, body }) => ({ entityType: 'purchase_order', entityId: r?.poNo, storeId: r?.storeId, summary: `Purchase order ${r?.poNo}: ${fieldsOf(body)}` }))
   update(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePurchaseOrderDto) {
     return this.purchasing.update(p, id, dto);
   }
@@ -84,6 +89,7 @@ export class PurchaseOrdersController {
   /** Draft → Ordered (sent to supplier). */
   @Scopes('purchasing:write')
   @Post(':id/order')
+  @Audit('PO_ORDERED', ({ result: r }) => ({ entityType: 'purchase_order', entityId: r?.poNo, storeId: r?.storeId, summary: `Purchase order ${r?.poNo} sent to the supplier` }))
   order(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     return this.purchasing.order(p, id);
   }
@@ -91,12 +97,14 @@ export class PurchaseOrdersController {
   /** Record a delivery (all or part of the order). Adds stock. */
   @Scopes('purchasing:write')
   @Post(':id/receive')
+  @Audit('PO_RECEIVED', ({ result: r, body }) => ({ entityType: 'purchase_order', entityId: r?.poNo, storeId: r?.storeId, summary: `Purchase order ${r?.poNo} received (${(body?.items ?? body?.lines ?? []).length} line(s))`, details: safeBody(body) }))
   receive(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReceivePurchaseOrderDto) {
     return this.purchasing.receive(p, id, dto);
   }
 
   @Scopes('purchasing:write')
   @Post(':id/cancel')
+  @Audit('PO_CANCELLED', ({ result: r }) => ({ entityType: 'purchase_order', entityId: r?.poNo, storeId: r?.storeId, summary: `Purchase order ${r?.poNo} cancelled` }))
   cancel(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     return this.purchasing.cancel(p, id);
   }

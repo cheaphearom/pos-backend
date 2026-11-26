@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { CouponType, Prisma, Role } from '@prisma/client';
@@ -287,18 +288,21 @@ export class CouponsController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('promotions:write')
   @Post()
+  @Audit('COUPON_CREATED', ({ result: r, body }) => ({ entityType: 'coupon', entityId: r?.id, summary: `Coupon "${body?.name}" created: ${body?.type === 'PERCENT' ? `${body?.value}% off` : `${Number(body?.value).toFixed(2)} off`}${body?.sharedCode ? `, code ${String(body.sharedCode).toUpperCase()}` : `, ${body?.uniqueCount} single-use codes`}`, details: safeBody(body) }))
   create(@Body() dto: CreateCampaignDto) {
     return this.coupons.create(dto);
   }
 
   @Roles(Role.SUPER_ADMIN)
   @Post(':id/codes')
+  @Audit('COUPON_CODES_ADDED', ({ params, result: r, before }) => ({ entityType: 'coupon', entityId: params.id, summary: `${r?.created ?? '?'} code(s) added to coupon "${before?.name ?? params.id}"` }), (db, c) => db.couponCampaign.findUnique({ where: { id: c.params.id }, select: { name: true } }))
   more(@Param('id', ParseUUIDPipe) id: string, @Body() dto: MoreCodesDto) {
     return this.coupons.addCodes(id, dto.count, dto.prefix);
   }
 
   @Roles(Role.SUPER_ADMIN)
   @Patch(':id')
+  @Audit('COUPON_CHANGED', ({ result: r, body }) => ({ entityType: 'coupon', entityId: r?.id, summary: `Coupon "${r?.name}": ${Object.entries(safeBody(body) ?? {}).map(([k, v]) => `${k} ${v}`).join(', ')}`, details: safeBody(body) }))
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCampaignDto) {
     return this.coupons.update(id, dto);
   }

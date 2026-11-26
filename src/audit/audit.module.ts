@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import {
   BadRequestException, Body, Controller, ForbiddenException, Get, Global, HttpCode, Injectable, Logger, Module, Post, Query,
 } from '@nestjs/common';
@@ -13,6 +14,7 @@ import { CurrentPrincipal, Roles } from '../common/decorators';
 import { DateRangeQueryDto, dateFilter } from '../common/date-range';
 import { pageArgs, toPage } from '../common/pagination';
 import { assertStoreAccess, Principal, userIdOf } from '../common/principal';
+import { AuditInterceptor } from './audited';
 import { PrismaService } from '../prisma/prisma.service';
 
 /*
@@ -255,5 +257,10 @@ export class AuditController {
 }
 
 @Global()
-@Module({ controllers: [AuditController], providers: [AuditService, ApprovalsService], exports: [AuditService, ApprovalsService] })
+@Module({
+  controllers: [AuditController],
+  // AuditInterceptor: writes the entries of controller methods marked with @Audit (audited.ts)
+  providers: [AuditService, ApprovalsService, { provide: APP_INTERCEPTOR, useClass: AuditInterceptor }],
+  exports: [AuditService, ApprovalsService],
+})
 export class AuditModule {}

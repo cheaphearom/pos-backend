@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Module, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Prisma, Role } from '@prisma/client';
@@ -216,6 +217,7 @@ export class ShiftsController {
 
   /** Start a cashier shift with the opening cash amount. */
   @Post('open')
+  @Audit('SHIFT_OPENED', ({ result: r, body }) => ({ entityType: 'shift', entityId: r?.id, storeId: body?.storeId, summary: `Shift opened with $${Number(body?.openingCash ?? 0).toFixed(2)}${Number(body?.openingKhr) ? ` and ៛${Number(body.openingKhr).toLocaleString('en-US')}` : ''} in the drawer` }))
   open(@CurrentPrincipal() p: Principal, @Body() dto: OpenShiftDto) {
     return this.shifts.open(p, dto);
   }

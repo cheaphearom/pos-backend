@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Prisma, Role, WasteReason } from '@prisma/client';
@@ -421,16 +422,19 @@ export class ProductionController {
   }
 
   @Post('batches')
+  @Audit('PRODUCTION_BATCH', ({ result: r, body }) => ({ action: r?.status === 'DONE' ? 'PRODUCTION_BAKED' : 'PRODUCTION_PLANNED', entityType: 'production_batch', entityId: r?.batchNo, storeId: body?.storeId, summary: `Batch ${r?.batchNo}: ${Number(r?.producedQty ?? r?.plannedQty ?? body?.quantity)} × ${r?.product?.name ?? 'product'} ${r?.status === 'DONE' ? 'baked' : 'planned'}` }))
   create(@CurrentPrincipal() p: Principal, @Body() dto: CreateBatchDto) {
     return this.production.create(p, dto);
   }
 
   @Post('batches/:id/complete')
+  @Audit('PRODUCTION_BAKED', ({ result: r }) => ({ entityType: 'production_batch', entityId: r?.batchNo, storeId: r?.storeId, summary: `Batch ${r?.batchNo} done: ${Number(r?.producedQty)} × ${r?.product?.name ?? 'product'}` }))
   complete(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: CompleteBatchDto) {
     return this.production.complete(p, id, dto);
   }
 
   @Post('batches/:id/cancel')
+  @Audit('PRODUCTION_CANCELLED', ({ result: r, params }) => ({ entityType: 'production_batch', entityId: r?.batchNo ?? params.id, storeId: r?.storeId, summary: `Batch ${r?.batchNo ?? params.id} cancelled` }))
   cancel(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     return this.production.cancel(p, id);
   }
@@ -442,6 +446,7 @@ export class ProductionController {
   }
 
   @Post('waste')
+  @Audit('WASTE_RECORDED', ({ body }) => ({ entityType: 'waste', storeId: body?.storeId, summary: `Waste written off: ${(body?.items ?? []).length} product(s)`, details: safeBody(body) }))
   waste(@CurrentPrincipal() p: Principal, @Body() dto: WasteDto) {
     return this.production.waste(p, dto);
   }
