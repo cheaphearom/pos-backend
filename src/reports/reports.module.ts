@@ -527,24 +527,18 @@ export class ReportsService {
   async slowMovers(p: Principal, q: SlowQueryDto) {
     const { where, from, to, tz } = this.scope(p, q, 's');
     const inv = this.storesOnly(p, q.storeId, 'i.store_id');
-    const st = this.storesOnly(p, q.storeId, 's.store_id');
     const rows = await this.prisma.$queryRaw<any[]>`
       WITH sold AS (
         SELECT si.product_id, sum(si.quantity - si.refunded_qty) AS qty, sum(si.net_amount * (si.quantity - si.refunded_qty) / si.quantity) AS revenue
           FROM sale_items si JOIN sales s ON s.id = si.sale_id
-         WHERE ${where} AND s.status <> 'VOIDED' GROUP BY 1),
-      last AS (
-        SELECT si.product_id, max(s.created_at) AS at
-          FROM sale_items si JOIN sales s ON s.id = si.sale_id
-         WHERE ${st} AND s.status <> 'VOIDED' GROUP BY 1)
+         WHERE ${where} AND s.status <> 'VOIDED' GROUP BY 1)
       SELECT pr.id, pr.sku, pr.name, pr.unit, pr.track_stock AS "trackStock", c.name AS category,
              pr.created_at >= ((${from}::date)::timestamp AT TIME ZONE ${tz}) AT TIME ZONE 'UTC' AS "isNew",
-             coalesce(max(sold.qty), 0) AS qty, coalesce(max(sold.revenue), 0) AS revenue, max(last.at) AS "lastSold",
+             coalesce(max(sold.qty), 0) AS qty, coalesce(max(sold.revenue), 0) AS revenue, max(i.last_sold_at) AS "lastSold",
              sum(i.quantity) AS stock, sum(greatest(i.quantity, 0) * pr.cost_price) AS "stockValue"
         FROM inventory i JOIN products pr ON pr.id = i.product_id
         LEFT JOIN categories c ON c.id = pr.category_id
         LEFT JOIN sold ON sold.product_id = pr.id
-        LEFT JOIN last ON last.product_id = pr.id
        WHERE ${inv} AND i.is_listed AND pr.is_active AND NOT pr.is_ingredient
        GROUP BY pr.id, c.name
        ORDER BY coalesce(max(sold.qty), 0) ASC, sum(greatest(i.quantity, 0) * pr.cost_price) DESC, pr.name

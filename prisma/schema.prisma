@@ -292,6 +292,8 @@ model Inventory {
   priceOverride Decimal? @map("price_override") @db.Decimal(14, 2)
   /// This store sells this product (shown on its POS, menu and product list). Turning it off keeps the stock.
   isListed      Boolean  @default(true) @map("is_listed")
+  /// Last time this store sold the product (kept by checkout, for the Slow movers report)
+  lastSoldAt    DateTime? @map("last_sold_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
@@ -485,6 +487,8 @@ model Sale {
   @@index([createdAt])
   @@index([storeId, kitchenStatus])
   @@index([tillId, offlineSeq])
+  /// receipt search ("contains"): trigram index, pg_trgm
+  @@index([receiptNo(ops: raw("gin_trgm_ops"))], type: Gin, map: "sales_receipt_no_trgm_idx")
   @@map("sales")
 }
 
