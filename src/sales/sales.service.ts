@@ -279,6 +279,13 @@ export class SalesService {
             await this.wallet.debitForSale(tx, pay.reference!, pay.amount, { saleId: created.id, storeId: dto.storeId, shiftId: shift?.id, userId, receiptNo });
           }
 
+          // Last sale of each product in this store (Slow movers): kept on the store's product row, so the report
+          // does not have to search the whole sales history.
+          const soldAt = offlineAt ?? new Date();
+          await tx.$executeRaw`
+            UPDATE inventory SET last_sold_at = GREATEST(coalesce(last_sold_at, ${soldAt}), ${soldAt})
+             WHERE store_id = ${dto.storeId}::uuid AND product_id IN (${Prisma.join([...new Set(lines.map((l) => l.prod.id))].map((id) => Prisma.sql`${id}::uuid`))})`;
+
           // 3. Take items and recipe ingredients out of stock, one change per product, sorted by
           //    product id so concurrent sales lock rows in the same order (no deadlocks).
           //    A missing ingredient never blocks a sale: its stock may go below zero (and shows as low).
@@ -484,13 +491,17 @@ export class SalesService {
           store: { select: { code: true, name: true } },
           cashier: { select: { fullName: true } },
           customer: { select: { name: true, code: true } },
-          _count: { select: { items: true } },
         },
         ...pageArgs(q),
       }),
       this.prisma.sale.count({ where }),
     ]);
-    return toPage(rows.map(withOfflineNo), total, q);
+    // Item counts for this page only: an `_count` include makes Prisma count the items of every sale ever made.
+    const counts = rows.length
+      ? await this.prisma.saleItem.groupBy({ by: ['saleId'], where: { saleId: { in: rows.map((r) => r.id) } }, _count: { _all: true } })
+      : [];
+    const items = new Map(counts.map((c) => [c.saleId, c._count._all]));
+    return toPage(rows.map((r) => withOfflineNo({ ...r, _count: { items: items.get(r.id) ?? 0 } })), total, q);
   }
 
   /**
