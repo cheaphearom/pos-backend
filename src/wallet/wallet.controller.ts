@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
-import { Audit, fieldsOf, safeBody } from '../audit/audited';
+import { Audit, fieldsOf, maskCard, safeBody } from '../audit/audited';
 import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
@@ -59,7 +59,7 @@ export class WalletController {
   /** Give a new card to a customer. Needs the serial printed on the card. */
   @Scopes('wallet:write')
   @Post(':id/activate')
-  @Audit('WALLET_CARD_ACTIVATED', ({ result: r, body, before }) => ({ entityType: 'wallet_card', entityId: before?.cardNumber, storeId: body?.storeId, summary: `Wallet card ${before?.cardNumber ?? ''} activated${body?.amount ? ` with $${Number(body.amount).toFixed(2)}` : ''}` }), (db, c) => db.walletCard.findUnique({ where: { id: c.params.id }, select: { cardNumber: true } }))
+  @Audit('WALLET_CARD_ACTIVATED', ({ result: r, body, before }) => ({ entityType: 'wallet_card', entityId: maskCard(before?.cardNumber), storeId: body?.storeId, summary: `Wallet card ${maskCard(before?.cardNumber)} activated${body?.amount ? ` with $${Number(body.amount).toFixed(2)}` : ''}` }), (db, c) => db.walletCard.findUnique({ where: { id: c.params.id }, select: { cardNumber: true } }))
   activate(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ActivateCardDto) {
     return this.wallet.activate(p, id, dto);
   }
@@ -67,7 +67,7 @@ export class WalletController {
   /** Customer pays money onto the card (cash, KHQR, bank card...). */
   @Scopes('wallet:write')
   @Post(':id/topup')
-  @Audit('WALLET_TOPUP', ({ result: r, body }) => ({ entityType: 'wallet_card', entityId: r?.card?.cardNumber, storeId: body?.storeId, summary: `Wallet card ${r?.card?.cardNumber ?? ''} topped up $${Number(body?.amount ?? 0).toFixed(2)}${body?.method ? ` (${body.method})` : ''}, balance $${Number(r?.card?.balance ?? 0).toFixed(2)}` }))
+  @Audit('WALLET_TOPUP', ({ result: r, body }) => ({ entityType: 'wallet_card', entityId: maskCard(r?.card?.cardNumber), storeId: body?.storeId, summary: `Wallet card ${maskCard(r?.card?.cardNumber)} topped up $${Number(body?.amount ?? 0).toFixed(2)}${body?.method ? ` (${body.method})` : ''}, balance $${Number(r?.card?.balance ?? 0).toFixed(2)}` }))
   topup(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: TopupDto) {
     return this.wallet.topup(p, id, dto);
   }
@@ -76,7 +76,7 @@ export class WalletController {
   @Post(':id/adjust')
   async adjust(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: AdjustBalanceDto) {
     const r: any = await this.wallet.adjust(p, id, dto);
-    this.audit.add(p, { action: 'WALLET_ADJUSTED', entityType: 'wallet', entityId: r?.cardNumber ?? id, summary: `Wallet ${r?.cardNumber ?? id}: ${dto.amount > 0 ? '+' : ''}${dto.amount} (${dto.reason})`, details: dto });
+    this.audit.add(p, { action: 'WALLET_ADJUSTED', entityType: 'wallet', entityId: maskCard(r?.cardNumber) || id, summary: `Wallet ${maskCard(r?.cardNumber) || id}: ${dto.amount > 0 ? '+' : ''}${dto.amount} (${dto.reason})`, details: dto });
     return r;
   }
 
@@ -84,7 +84,7 @@ export class WalletController {
   @Post(':id/block')
   async block(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReasonDto) {
     const r = await this.wallet.setStatus(id, 'BLOCKED', dto.reason);
-    this.audit.add(p, { action: 'WALLET_BLOCKED', entityType: 'wallet', entityId: r.cardNumber, summary: `Wallet ${r.cardNumber} blocked${dto.reason ? `: ${dto.reason}` : ''}` });
+    this.audit.add(p, { action: 'WALLET_BLOCKED', entityType: 'wallet', entityId: maskCard(r.cardNumber), summary: `Wallet ${maskCard(r.cardNumber)} blocked${dto.reason ? `: ${dto.reason}` : ''}` });
     return r;
   }
 
@@ -92,12 +92,12 @@ export class WalletController {
   @Post(':id/unblock')
   async unblock(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     const r = await this.wallet.setStatus(id, 'ACTIVE');
-    this.audit.add(p, { action: 'WALLET_UNBLOCKED', entityType: 'wallet', entityId: r.cardNumber, summary: `Wallet ${r.cardNumber} unblocked` });
+    this.audit.add(p, { action: 'WALLET_UNBLOCKED', entityType: 'wallet', entityId: maskCard(r.cardNumber), summary: `Wallet ${maskCard(r.cardNumber)} unblocked` });
     return r;
   }
 
   @Post(':id/pin')
-  @Audit('WALLET_PIN_CHANGED', ({ before }) => ({ entityType: 'wallet_card', entityId: before?.cardNumber, summary: `PIN of wallet card ${before?.cardNumber ?? ''} set or changed` }), (db, c) => db.walletCard.findUnique({ where: { id: c.params.id }, select: { cardNumber: true } }))
+  @Audit('WALLET_PIN_CHANGED', ({ before }) => ({ entityType: 'wallet_card', entityId: maskCard(before?.cardNumber), summary: `PIN of wallet card ${maskCard(before?.cardNumber)} set or changed` }), (db, c) => db.walletCard.findUnique({ where: { id: c.params.id }, select: { cardNumber: true } }))
   setPin(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: SetPinDto) {
     return this.wallet.setPin(p, id, dto.pin);
   }
@@ -105,7 +105,7 @@ export class WalletController {
   /** Lost card: move customer and balance to a new card. */
   @Roles(Role.STORE_MANAGER)
   @Post(':id/replace')
-  @Audit('WALLET_CARD_REPLACED', ({ before, result: r }) => ({ entityType: 'wallet_card', entityId: before?.cardNumber, summary: `Wallet card ${before?.cardNumber ?? ''} replaced${r?.cardNumber ? ` by ${r.cardNumber}` : r?.card?.cardNumber ? ` by ${r.card.cardNumber}` : ''}` }), (db, c) => db.walletCard.findUnique({ where: { id: c.params.id }, select: { cardNumber: true } }))
+  @Audit('WALLET_CARD_REPLACED', ({ before, result: r }) => ({ entityType: 'wallet_card', entityId: maskCard(before?.cardNumber), summary: `Wallet card ${maskCard(before?.cardNumber)} replaced${r?.cardNumber ? ` by ${maskCard(r.cardNumber)}` : r?.card?.cardNumber ? ` by ${maskCard(r.card.cardNumber)}` : ''}` }), (db, c) => db.walletCard.findUnique({ where: { id: c.params.id }, select: { cardNumber: true } }))
   replace(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ReplaceCardDto) {
     return this.wallet.replace(p, id, dto);
   }
