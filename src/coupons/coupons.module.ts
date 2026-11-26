@@ -9,7 +9,7 @@ import { Roles, Scopes } from '../common/decorators';
 import { PageQueryDto, pageArgs, toPage } from '../common/pagination';
 import { PrismaService } from '../prisma/prisma.service';
 import { randomCode } from '../wallet/card-number';
-import { couponDiscount } from './calc';
+import { CouponLine, couponForLines } from './calc';
 
 export class CreateCampaignDto {
   @IsString() @MaxLength(100)
@@ -29,6 +29,14 @@ export class CreateCampaignDto {
 
   @IsOptional() @IsArray() @ArrayUnique() @IsUUID('all', { each: true })
   storeIds?: string[];
+
+  /** Only these products (empty = no product limit) */
+  @IsOptional() @IsArray() @ArrayUnique() @IsUUID('all', { each: true })
+  productIds?: string[];
+
+  /** Only these categories, with their sub-categories (empty = no category limit) */
+  @IsOptional() @IsArray() @ArrayUnique() @IsUUID('all', { each: true })
+  categoryIds?: string[];
 
   @IsOptional() @IsDateString()
   startsAt?: string;
@@ -135,6 +143,14 @@ export class CouponsService {
     if (!dto.sharedCode && !dto.uniqueCount) throw new BadRequestException('Give a shared code or a number of unique codes');
     if (dto.type === 'PERCENT' && dto.value > 100) throw new BadRequestException('Percent must be 100 or less');
     const { sharedCode, uniqueCount, prefix, ...data } = dto;
+    if (data.productIds?.length) {
+      const found = await this.prisma.product.count({ where: { id: { in: data.productIds } } });
+      if (found !== data.productIds.length) throw new BadRequestException('A chosen product does not exist');
+    }
+    if (data.categoryIds?.length) {
+      const found = await this.prisma.category.count({ where: { id: { in: data.categoryIds } } });
+      if (found !== data.categoryIds.length) throw new BadRequestException('A chosen category does not exist');
+    }
     const campaign = await this.prisma.couponCampaign.create({ data });
     if (sharedCode) {
       await this.prisma.couponCode.create({ data: { campaignId: campaign.id, code: sharedCode.toUpperCase(), maxUses: null } }).catch(async (e) => {
@@ -157,11 +173,33 @@ export class CouponsService {
     return this.prisma.couponCampaign.update({ where: { id }, data: dto });
   }
 
+  /** The campaign's categories with all their sub-categories (a coupon on Beverages covers Beverages > Cold Drinks). */
+  async withSubcategories(categoryIds: string[]): Promise<string[]> {
+    if (!categoryIds.length) return [];
+    const cats = await this.prisma.category.findMany({ select: { id: true, parentId: true } });
+    const kids = new Map<string, string[]>();
+    for (const c of cats) if (c.parentId) kids.set(c.parentId, [...(kids.get(c.parentId) ?? []), c.id]);
+    const all = new Set(categoryIds);
+    const todo = [...categoryIds];
+    while (todo.length) for (const k of kids.get(todo.pop()!) ?? []) if (!all.has(k)) { all.add(k); todo.push(k); }
+    return [...all];
+  }
+
+  /** What the POS needs to work out the coupon like the server (categories include their sub-categories). */
+  async forPos(r: CouponCheck) {
+    const c = r.campaign;
+    return {
+      code: r.code.code, name: c.name, type: c.type, value: c.value, minSpend: c.minSpend, maxDiscount: c.maxDiscount, membersOnly: c.membersOnly,
+      productIds: c.productIds, categoryIds: await this.withSubcategories(c.categoryIds),
+    };
+  }
+
   /**
    * Check a code for a sale without using it. Throws with a clear reason.
-   * `base` = sale value after line discounts and promotions, before tax.
+   * `lines` = the sale's lines, each after line discounts and promotions, before tax; a coupon for some products
+   * or categories counts only those lines.
    */
-  async check(code: string, ctx: { storeId: string; customerId?: string | null; base?: number; at?: Date }): Promise<CouponCheck & { discount: number }> {
+  async check(code: string, ctx: { storeId: string; customerId?: string | null; lines?: CouponLine[]; at?: Date }): Promise<CouponCheck & { discount: number }> {
     const row = await this.prisma.couponCode.findUnique({ where: { code: code.trim().toUpperCase() }, include: { campaign: true } });
     if (!row) throw new NotFoundException('Coupon code not found');
     const { campaign, ...c } = row;
@@ -179,8 +217,12 @@ export class CouponsService {
       if (used >= campaign.perCustomerLimit) throw new BadRequestException('This customer has already used this coupon');
     }
     let discount = 0;
-    if (ctx.base !== undefined) {
-      const r = couponDiscount({ ...campaign, value: campaign.value.toString(), minSpend: campaign.minSpend.toString(), maxDiscount: campaign.maxDiscount?.toString() }, ctx.base);
+    if (ctx.lines !== undefined) {
+      const rule = {
+        ...campaign, value: campaign.value.toString(), minSpend: campaign.minSpend.toString(), maxDiscount: campaign.maxDiscount?.toString(),
+        categoryIds: await this.withSubcategories(campaign.categoryIds),
+      };
+      const r = couponForLines(rule, ctx.lines);
       if (r.error) throw new BadRequestException(r.error);
       discount = r.discount;
     }
@@ -226,9 +268,7 @@ export class CouponsController {
   @Scopes('sales:write')
   @Get('check')
   async check(@Query('code') code: string, @Query('storeId', ParseUUIDPipe) storeId: string, @Query('customerId') customerId?: string) {
-    const r = await this.coupons.check(code ?? '', { storeId, customerId: customerId || null });
-    const c = r.campaign;
-    return { code: r.code.code, name: c.name, type: c.type, value: c.value, minSpend: c.minSpend, maxDiscount: c.maxDiscount, membersOnly: c.membersOnly };
+    return this.coupons.forPos(await this.coupons.check(code ?? '', { storeId, customerId: customerId || null }));
   }
 
   @Roles(Role.STORE_MANAGER)

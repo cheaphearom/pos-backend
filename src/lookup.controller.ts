@@ -34,8 +34,7 @@ export class LookupController {
     if (voucher) return { kind: 'voucher', voucher };
     try {
       const r = await this.coupons.check(code, { storeId, customerId: customerId || null });
-      const c = r.campaign;
-      return { kind: 'coupon', coupon: { code: r.code.code, name: c.name, type: c.type, value: c.value, minSpend: c.minSpend, maxDiscount: c.maxDiscount } };
+      return { kind: 'coupon', coupon: await this.coupons.forPos(r) };
     } catch (e) {
       if (!(e instanceof NotFoundException)) throw e; // a real coupon that cannot be used now: show why
     }
