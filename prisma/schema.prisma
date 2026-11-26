@@ -877,6 +877,9 @@ model CouponCampaign {
   minSpend         Decimal    @default(0) @map("min_spend") @db.Decimal(14, 2)
   maxDiscount      Decimal?   @map("max_discount") @db.Decimal(14, 2) // cap for percent coupons
   storeIds         String[]   @default([]) @map("store_ids") // empty = all stores
+  /// Only these products / categories (a category covers its sub-categories). Both empty = every item.
+  productIds       String[]   @default([]) @map("product_ids")
+  categoryIds      String[]   @default([]) @map("category_ids")
   startsAt         DateTime?  @map("starts_at")
   endsAt           DateTime?  @map("ends_at")
   usageLimit       Int?       @map("usage_limit") // total uses of the whole campaign

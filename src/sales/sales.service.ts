@@ -429,8 +429,11 @@ export class SalesService {
     let coupon: (CouponCheck & { discount: number }) | null = null;
     if (dto.couponCode) {
       if (offlineAt) throw new BadRequestException('Coupons need a connection and cannot be used offline');
-      const base = lines.reduce((t, l) => t.plus(l.unitPrice.mul(l.item.quantity).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).minus(l.lineDiscount)), D(0));
-      coupon = await this.coupons.check(dto.couponCode, { storeId: dto.storeId, customerId: dto.customerId, base: base.toNumber() });
+      const couponLines = lines.map((l) => ({
+        productId: l.prod.id, categoryId: l.prod.categoryId,
+        net: l.unitPrice.mul(l.item.quantity).toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP).minus(l.lineDiscount).toNumber(),
+      }));
+      coupon = await this.coupons.check(dto.couponCode, { storeId: dto.storeId, customerId: dto.customerId, lines: couponLines });
     }
 
     let priced;

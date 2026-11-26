@@ -18,6 +18,16 @@ export interface CouponRule {
   value: number | string;
   minSpend: number | string;
   maxDiscount?: number | string | null;
+  /** Only these products and categories (with their sub-categories). Both empty = every item. */
+  productIds?: string[] | null;
+  categoryIds?: string[] | null;
+}
+
+/** One sale line for a coupon: `net` = its value after line discounts and promotions, before tax. */
+export interface CouponLine {
+  productId: string;
+  categoryId?: string | null;
+  net: number | string;
 }
 
 const cents = (v: number | string) => Math.round(Number(v) * 100);
@@ -37,7 +47,30 @@ export function couponDiscount(rule: CouponRule, base: number): { discount: numb
   return { discount: Math.min(d, b) / 100 };
 }
 
-export const describeCoupon = (r: Pick<CouponRule, 'type' | 'value' | 'minSpend' | 'maxDiscount'>) =>
+/** True when the coupon is only for some products or categories. */
+export const couponLimited = (r: Pick<CouponRule, 'productIds' | 'categoryIds'>) => !!(r.productIds?.length || r.categoryIds?.length);
+
+/** The line can use the coupon (always, when the coupon is for every item). */
+export const couponFits = (r: Pick<CouponRule, 'productIds' | 'categoryIds'>, l: Pick<CouponLine, 'productId' | 'categoryId'>) =>
+  !couponLimited(r) || !!r.productIds?.includes(l.productId) || (!!l.categoryId && !!r.categoryIds?.includes(l.categoryId));
+
+/**
+ * Coupon on a sale's lines. A coupon for some products or categories counts only those lines, for the minimum
+ * spend too; `categoryIds` must already include the sub-categories.
+ */
+export function couponForLines(rule: CouponRule, lines: CouponLine[]): { discount: number; base: number; error?: string } {
+  const fit = lines.filter((l) => couponFits(rule, l));
+  const base = fit.reduce((t, l) => t + cents(l.net), 0) / 100;
+  if (couponLimited(rule) && !fit.length) return { discount: 0, base: 0, error: 'None of the items in this sale can use this coupon' };
+  const r = couponDiscount(rule, base);
+  if (r.error && couponLimited(rule)) {
+    return { discount: 0, base, error: `Spend at least ${(cents(rule.minSpend ?? 0) / 100).toFixed(2)} on the coupon's items to use this coupon` };
+  }
+  return { ...r, base };
+}
+
+export const describeCoupon = (r: Pick<CouponRule, 'type' | 'value' | 'minSpend' | 'maxDiscount' | 'productIds' | 'categoryIds'>) =>
   (r.type === 'PERCENT' ? `${Number(r.value)}% off` : `${Number(r.value).toFixed(2)} off`) +
   (Number(r.minSpend) > 0 ? ` when you spend ${Number(r.minSpend).toFixed(2)}` : '') +
-  (r.type === 'PERCENT' && r.maxDiscount != null && r.maxDiscount !== '' ? ` (max ${Number(r.maxDiscount).toFixed(2)})` : '');
+  (r.type === 'PERCENT' && r.maxDiscount != null && r.maxDiscount !== '' ? ` (max ${Number(r.maxDiscount).toFixed(2)})` : '') +
+  (couponLimited(r) ? ' · selected items only' : '');
