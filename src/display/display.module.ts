@@ -8,6 +8,7 @@
  * image/png or image/webp, at most 5 MB). The picture address is public (an <img> sends no token); its id is a
  * random UUID, and the address carries ?v= so a changed slide is fetched again while others stay cached.
  */
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, Injectable, Module, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Query, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -197,6 +198,7 @@ export class DisplayController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Post()
+  @Audit('DISPLAY_SLIDE_ADDED', ({ result: r }) => ({ entityType: 'display_slide', entityId: r?.id, summary: `Customer display slide "${r?.title ?? ''}" added` }))
   upload(@Body() body: Buffer, @Headers('content-type') contentType: string | undefined, @Query() q: UploadSlideQuery) {
     return this.display.upload(body, contentType, q);
   }
@@ -204,6 +206,7 @@ export class DisplayController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Patch(':id')
+  @Audit('DISPLAY_SLIDE_CHANGED', ({ result: r, body }) => ({ entityType: 'display_slide', entityId: r?.id, summary: `Customer display slide "${r?.title ?? ''}": ${fieldsOf(body)}`, details: safeBody(body) }))
   update(@Param('id', new ParseUUIDPipe()) id: string, @Body() dto: UpdateSlideDto) {
     return this.display.update(id, dto);
   }
@@ -212,6 +215,7 @@ export class DisplayController {
   @Scopes('products:write')
   @Post(':id/move')
   @HttpCode(200)
+  @Audit('DISPLAY_SLIDE_MOVED', ({ params, body, before }) => ({ entityType: 'display_slide', entityId: params.id, summary: `Customer display slide "${before?.title ?? ''}" moved ${Object.values(safeBody(body) ?? {}).join(' ')}` }), (db, c) => db.displaySlide.findUnique({ where: { id: c.params.id }, select: { title: true } }))
   move(@Param('id', new ParseUUIDPipe()) id: string, @Body() dto: MoveSlideDto) {
     return this.display.move(id, dto.move);
   }
@@ -220,6 +224,7 @@ export class DisplayController {
   @Scopes('products:write')
   @Delete(':id')
   @HttpCode(204)
+  @Audit('DISPLAY_SLIDE_DELETED', ({ params, before }) => ({ entityType: 'display_slide', entityId: params.id, summary: `Customer display slide "${before?.title ?? params.id}" deleted` }), (db, c) => db.displaySlide.findUnique({ where: { id: c.params.id }, select: { title: true } }))
   async remove(@Param('id', new ParseUUIDPipe()) id: string) {
     await this.display.remove(id);
   }

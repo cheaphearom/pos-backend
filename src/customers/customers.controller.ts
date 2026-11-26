@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
@@ -60,12 +61,14 @@ export class CustomersController {
 
   @Scopes('customers:write')
   @Post()
+  @Audit('CUSTOMER_CREATED', ({ result: r }) => ({ entityType: 'customer', entityId: r?.code, summary: `Member ${r?.name} (${r?.code}) registered` }))
   create(@Body() dto: CreateCustomerDto) {
     return this.customers.create(dto);
   }
 
   @Scopes('customers:write')
   @Patch(':id')
+  @Audit('CUSTOMER_CHANGED', ({ result: r, body }) => ({ entityType: 'customer', entityId: r?.code, summary: `Member ${r?.name} (${r?.code}): ${fieldsOf(body)}`, details: safeBody(body) }))
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCustomerDto) {
     return this.customers.update(id, dto);
   }

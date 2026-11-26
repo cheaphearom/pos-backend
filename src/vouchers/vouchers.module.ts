@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { BadRequestException, Body, Controller, Get, Injectable, Module, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { PaymentMethod, Prisma, Role, VoucherStatus } from '@prisma/client';
@@ -180,6 +181,7 @@ export class VouchersController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('promotions:write')
   @Post('batches')
+  @Audit('VOUCHER_BATCH_CREATED', ({ result: r, body }) => ({ entityType: 'voucher_batch', entityId: r?.id ?? r?.batch?.id, summary: `${body?.count} gift voucher(s) "${body?.name}" of $${Number(body?.value).toFixed(2)} created (${body?.sold === false ? 'free' : 'to sell'})`, details: safeBody(body) }))
   createBatch(@Body() dto: CreateBatchDto) {
     return this.vouchers.createBatch(dto);
   }
@@ -199,12 +201,14 @@ export class VouchersController {
   /** Sell a voucher at the till (activates it). */
   @Scopes('sales:write')
   @Post(':code/sell')
+  @Audit('VOUCHER_SOLD', ({ params, body }) => ({ entityType: 'voucher', entityId: params.code, storeId: body?.storeId, summary: `Gift voucher ${params.code} sold${body?.method ? ` (${body.method})` : ''}`, details: safeBody(body) }))
   sell(@CurrentPrincipal() p: Principal, @Param('code') code: string, @Body() dto: SellVoucherDto) {
     return this.vouchers.sell(p, code, dto);
   }
 
   @Roles(Role.STORE_MANAGER)
   @Post(':code/void')
+  @Audit('VOUCHER_VOIDED', ({ params, body }) => ({ entityType: 'voucher', entityId: params.code, summary: `Gift voucher ${params.code} cancelled${body?.reason ? `: ${body.reason}` : ''}` }))
   void(@Param('code') code: string, @Body('reason') reason?: string) {
     return this.vouchers.void(code, reason);
   }

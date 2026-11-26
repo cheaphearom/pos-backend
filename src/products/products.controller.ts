@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { AuditService } from '../audit/audit.module';
 import { BadRequestException, Body, Controller, Delete, Get, Headers, HttpCode, NotFoundException, Param, ParseUUIDPipe, Patch, Post, Put, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
@@ -133,6 +134,7 @@ export class ProductsController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Post()
+  @Audit('PRODUCT_CREATED', ({ result: r, body }) => ({ entityType: 'product', entityId: r?.sku ?? body?.sku, summary: `Product ${r?.sku ?? body?.sku} ${r?.name ?? body?.name} created, price $${Number(r?.sellPrice ?? body?.sellPrice ?? 0).toFixed(2)}${(body?.stores ?? []).length ? `, sold in ${body.stores.length} store(s)` : ''}` }))
   async create(@CurrentPrincipal() p: Principal, @Body() dto: CreateProductDto) {
     const out = await this.products.create(dto);
     await this.history.record(new Map(), await this.history.snapshot([out.id]), metaOf(p, 'CREATE'), true);
@@ -193,6 +195,7 @@ export class ProductsController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Post('bulk')
+  @Audit('PRODUCTS_IMPORTED', ({ body, result: r }) => ({ entityType: 'product', summary: `Products imported: ${(body?.products ?? []).length} row(s)${r?.created !== undefined ? ` (${r.created} new, ${r.updated ?? 0} updated)` : ''}` }))
   bulk(@CurrentPrincipal() p: Principal, @Body() dto: BulkUpsertProductsDto) {
     return this.history.track(null, metaOf(p, 'IMPORT'), () => this.products.bulkUpsert(dto.products));
   }

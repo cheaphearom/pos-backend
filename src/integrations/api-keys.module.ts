@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { Body, Controller, Delete, Get, HttpCode, Injectable, Module, Param, ParseUUIDPipe, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -100,12 +101,14 @@ export class ApiKeysController {
 
   /** Create a key for another system. The full key is returned only once. */
   @Post()
+  @Audit('API_KEY_CREATED', ({ result: r, body }) => ({ entityType: 'api_key', entityId: r?.id ?? r?.apiKey?.id, summary: `API key "${body?.name}" created${r?.prefix || r?.apiKey?.prefix ? ` (${r?.prefix ?? r?.apiKey?.prefix}…)` : ''}, scopes: ${(body?.scopes ?? []).join(', ') || 'none'}`, details: { name: body?.name, scopes: body?.scopes, storeIds: body?.storeIds } }))
   create(@CurrentPrincipal() p: Principal, @Body() dto: CreateApiKeyDto) {
     return this.keys.create(p, dto);
   }
 
   @Delete(':id')
   @HttpCode(200)
+  @Audit('API_KEY_REVOKED', ({ params, before }) => ({ entityType: 'api_key', entityId: params.id, summary: `API key "${before?.name ?? params.id}" revoked` }), (db, c) => db.apiKey.findUnique({ where: { id: c.params.id }, select: { name: true } }))
   revoke(@Param('id', ParseUUIDPipe) id: string) {
     return this.keys.revoke(id);
   }

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Injectable, Module, Param, ParseUUIDPipe, Post, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Prisma, Role } from '@prisma/client';
@@ -100,6 +101,7 @@ export class ModifiersController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Post()
+  @Audit('DRINK_OPTIONS_CREATED', ({ result: r, body }) => ({ entityType: 'modifier_group', entityId: r?.id, summary: `Drink options "${body?.name}" created: ${(body?.options ?? []).map((o: any) => o.name).join(', ')}`, details: safeBody(body) }))
   create(@Body() dto: SaveGroupDto) {
     return this.modifiers.save(null, dto);
   }
@@ -107,6 +109,7 @@ export class ModifiersController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Put(':id')
+  @Audit('DRINK_OPTIONS_CHANGED', ({ params, body }) => ({ entityType: 'modifier_group', entityId: params.id, summary: `Drink options "${body?.name}" saved: ${(body?.options ?? []).map((o: any) => `${o.name}${Number(o.priceDelta) ? ` +${Number(o.priceDelta).toFixed(2)}` : ''}`).join(', ')}`, details: safeBody(body) }))
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: SaveGroupDto) {
     return this.modifiers.save(id, dto);
   }
@@ -114,6 +117,7 @@ export class ModifiersController {
   @Roles(Role.SUPER_ADMIN)
   @Delete(':id')
   @HttpCode(204)
+  @Audit('DRINK_OPTIONS_DELETED', ({ params, before }) => ({ entityType: 'modifier_group', entityId: params.id, summary: `Drink options "${before?.name ?? params.id}" deleted` }), (db, c) => db.modifierGroup.findUnique({ where: { id: c.params.id } }))
   async remove(@Param('id', ParseUUIDPipe) id: string) {
     await this.modifiers.remove(id);
   }

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
@@ -53,6 +54,11 @@ export class InventoryController {
   @Roles(Role.STORE_MANAGER)
   @Scopes('inventory:write')
   @Put(':storeId/:productId')
+  @Audit('STORE_PRODUCT_CHANGED', ({ params, body, before }) => ({
+    entityType: 'product', entityId: before?.sku ?? params.productId, storeId: params.storeId,
+    summary: `${before?.name ?? 'Product'} in this store: ${Object.entries(safeBody(body) ?? {}).map(([k, v]) => `${k} ${v === null ? '—' : v}`).join(', ')}`,
+    details: safeBody(body),
+  }), (db, c) => db.product.findUnique({ where: { id: c.params.productId }, select: { name: true, sku: true } }))
   update(
     @CurrentPrincipal() p: Principal,
     @Param('storeId', ParseUUIDPipe) storeId: string,
@@ -88,6 +94,7 @@ export class TransfersController {
   @Roles(Role.STORE_MANAGER)
   @Scopes('inventory:write')
   @Post()
+  @Audit('TRANSFER_CREATED', ({ result: r, body }) => ({ entityType: 'transfer', entityId: r?.transferNo, storeId: r?.fromStoreId ?? body?.fromStoreId, summary: `Transfer ${r?.transferNo} sent: ${(body?.items ?? []).length} product(s)`, details: safeBody(body) }))
   create(@CurrentPrincipal() p: Principal, @Body() dto: CreateTransferDto) {
     return this.inventory.createTransfer(p, dto);
   }
@@ -96,6 +103,7 @@ export class TransfersController {
   @Roles(Role.STORE_MANAGER)
   @Scopes('inventory:write')
   @Post(':id/receive')
+  @Audit('TRANSFER_RECEIVED', ({ result: r }) => ({ entityType: 'transfer', entityId: r?.transferNo, storeId: r?.toStoreId, summary: `Transfer ${r?.transferNo} received` }))
   receive(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     return this.inventory.receiveTransfer(p, id);
   }
@@ -104,6 +112,7 @@ export class TransfersController {
   @Roles(Role.STORE_MANAGER)
   @Scopes('inventory:write')
   @Post(':id/cancel')
+  @Audit('TRANSFER_CANCELLED', ({ result: r }) => ({ entityType: 'transfer', entityId: r?.transferNo, storeId: r?.fromStoreId, summary: `Transfer ${r?.transferNo} cancelled` }))
   cancel(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     return this.inventory.cancelTransfer(p, id);
   }

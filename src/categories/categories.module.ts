@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { Body, Controller, Delete, Get, HttpCode, Injectable, Module, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags, PartialType } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -62,6 +63,7 @@ export class CategoriesController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Post()
+  @Audit('CATEGORY_CREATED', ({ result: r }) => ({ entityType: 'category', entityId: r?.id, summary: `Category "${r?.name}" created` }))
   create(@Body() dto: CreateCategoryDto) {
     return this.categories.create(dto);
   }
@@ -69,6 +71,7 @@ export class CategoriesController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Patch(':id')
+  @Audit('CATEGORY_CHANGED', ({ result: r, body }) => ({ entityType: 'category', entityId: r?.id, summary: `Category "${r?.name}": ${fieldsOf(body)}`, details: safeBody(body) }))
   update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateCategoryDto) {
     return this.categories.update(id, dto);
   }
@@ -76,6 +79,7 @@ export class CategoriesController {
   @Roles(Role.SUPER_ADMIN)
   @Delete(':id')
   @HttpCode(204)
+  @Audit('CATEGORY_DELETED', ({ params, before }) => ({ entityType: 'category', entityId: params.id, summary: `Category "${before?.name ?? params.id}" deleted` }), (db, c) => db.category.findUnique({ where: { id: c.params.id } }))
   async remove(@Param('id', ParseUUIDPipe) id: string) {
     await this.categories.remove(id);
   }

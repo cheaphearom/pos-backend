@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit, fieldsOf, safeBody } from '../audit/audited';
 import { BadRequestException, Body, Controller, ForbiddenException, Get, Injectable, Module, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Prisma, Role } from '@prisma/client';
@@ -9,6 +10,7 @@ import { CurrentPrincipal } from '../common/decorators';
 import { DateRangeQueryDto, dateFilter } from '../common/date-range';
 import { pageArgs, toPage } from '../common/pagination';
 import { assertStoreAccess, Principal, storeScope } from '../common/principal';
+import { AuditService } from '../audit/audit.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { logEvent } from '../logging/logger';
 
@@ -53,7 +55,7 @@ const D = (v: Prisma.Decimal.Value) => new Prisma.Decimal(v);
 
 @Injectable()
 export class ShiftsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly audit: AuditService) {}
 
   async open(p: Principal, dto: OpenShiftDto) {
     assertStoreAccess(p, dto.storeId);
@@ -86,13 +88,34 @@ export class ShiftsService {
         expectedKhr: summary.khr.expected,
         note: dto.note,
       },
-    }).then((s) => {
+    }).then(async (s) => {
       const difference = D(dto.closingCash).minus(summary.expectedCash);
       const differenceKhr = dto.closingKhr === undefined ? null : dto.closingKhr - summary.khr.expected;
       const fields = { storeId: s.storeId, expectedCash: summary.expectedCash, difference, differenceKhr, durationMin: Math.round((Date.now() - s.openedAt.getTime()) / 60_000) };
       logEvent('info', 'shift_closed', 'Shift closed', fields);
       if (difference.abs().gt(CASH_MISMATCH_THRESHOLD)) logEvent('warn', 'cash_mismatch', 'Counted cash differs from expected', fields);
+      await this.auditClose(p, s, summary.expectedCash, difference, summary.khr.expected, differenceKhr, dto);
       return { ...s, summary, difference, differenceKhr };
+    });
+  }
+
+  /** Audit log: who closed whose shift, expected vs counted, short / over (dollars and riel), the note. */
+  private async auditClose(p: Principal, s: { id: string; storeId: string; userId: string; openedAt: Date }, expected: Prisma.Decimal | number, difference: Prisma.Decimal, expectedKhr: number, differenceKhr: number | null, dto: CloseShiftDto) {
+    const owner = s.userId === p.id ? p.name : (await this.prisma.user.findUnique({ where: { id: s.userId }, select: { fullName: true } }))?.fullName ?? 'a cashier';
+    const diff = (d: number, fmt: (n: number) => string) => (d === 0 ? 'balances' : `${d < 0 ? 'short' : 'over'} ${fmt(Math.abs(d))}`);
+    const usd = (n: number) => `$${n.toFixed(2)}`;
+    const khr = (n: number) => `៛${Math.round(n).toLocaleString('en-US')}`;
+    const d = Number(difference.toFixed(2));
+    const parts = [`expected ${usd(Number(expected))}, counted ${usd(Number(dto.closingCash))} (${diff(d, usd)})`];
+    if (differenceKhr !== null) parts.push(`riel expected ${khr(expectedKhr)}, counted ${khr(dto.closingKhr!)} (${diff(differenceKhr, khr)})`);
+    const differs = d !== 0 || (differenceKhr !== null && differenceKhr !== 0);
+    this.audit.add(p, {
+      action: differs ? 'SHIFT_CLOSED_DIFFERENCE' : 'SHIFT_CLOSED', storeId: s.storeId, entityType: 'shift', entityId: s.id,
+      summary: `${s.userId === p.id ? `${owner} closed their shift` : `${p.name} closed the shift of ${owner}`}: ${parts.join('; ')}${dto.note ? ` · ${dto.note}` : ''}`,
+      details: {
+        cashier: owner, openedAt: s.openedAt, expectedCash: Number(expected), closingCash: dto.closingCash, difference: d,
+        ...(differenceKhr !== null && { expectedKhr, closingKhr: dto.closingKhr, differenceKhr }), note: dto.note ?? null,
+      },
     });
   }
 
@@ -194,6 +217,7 @@ export class ShiftsController {
 
   /** Start a cashier shift with the opening cash amount. */
   @Post('open')
+  @Audit('SHIFT_OPENED', ({ result: r, body }) => ({ entityType: 'shift', entityId: r?.id, storeId: body?.storeId, summary: `Shift opened with $${Number(body?.openingCash ?? 0).toFixed(2)}${Number(body?.openingKhr) ? ` and ៛${Number(body.openingKhr).toLocaleString('en-US')}` : ''} in the drawer` }))
   open(@CurrentPrincipal() p: Principal, @Body() dto: OpenShiftDto) {
     return this.shifts.open(p, dto);
   }

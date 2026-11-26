@@ -9,6 +9,7 @@ import { REPORT_TIMEZONE } from '../config';
 import { CurrentPrincipal, Roles, Scopes } from '../common/decorators';
 import { PageQueryDto, pageArgs, toPage } from '../common/pagination';
 import { assertStoreAccess, Principal } from '../common/principal';
+import { AuditService } from '../audit/audit.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { PromoRule } from './engine';
 
@@ -93,7 +94,10 @@ export function toRule(p: Prisma.PromotionGetPayload<object>): PromoRule {
 export class PromotionsService {
   private cache = new Map<string, { at: number; rules: PromoRule[] }>();
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async list(q: PromotionQueryDto) {
     const where: Prisma.PromotionWhereInput = q.search ? { name: { contains: q.search, mode: 'insensitive' } } : {};
@@ -108,24 +112,50 @@ export class PromotionsService {
     return this.prisma.promotion.findUniqueOrThrow({ where: { id } });
   }
 
-  async create(dto: CreatePromotionDto) {
+  async create(dto: CreatePromotionDto, by?: Principal) {
     this.validate(dto);
     const p = await this.prisma.promotion.create({ data: dto });
     this.cache.clear();
+    if (by) {
+      this.audit.add(by, {
+        action: 'PROMOTION_CREATED', entityType: 'promotion', entityId: p.id, storeId: p.storeIds.length === 1 ? p.storeIds[0] : undefined,
+        summary: `New promotion "${p.name}": ${p.type} ${Number(p.value)}${p.isActive ? '' : ' (off)'}`, details: promoSnapshot(p),
+      });
+    }
     return p;
   }
 
-  async update(id: string, dto: UpdatePromotionDto) {
+  async update(id: string, dto: UpdatePromotionDto, by?: Principal) {
     const existing = await this.get(id);
     this.validate({ ...toRule(existing), ...dto, value: dto.value ?? Number(existing.value) } as CreatePromotionDto);
     const p = await this.prisma.promotion.update({ where: { id }, data: dto });
     this.cache.clear();
+    if (by) {
+      const before = promoSnapshot(existing);
+      const after = promoSnapshot(p);
+      const changes = (Object.keys(after) as (keyof typeof after)[]).filter((k) => JSON.stringify(before[k]) !== JSON.stringify(after[k]));
+      if (changes.length) {
+        const show = (v: unknown) => (v === null || v === undefined || v === '' ? '—' : Array.isArray(v) ? `${v.length} chosen` : String(v));
+        this.audit.add(by, {
+          action: 'PROMOTION_CHANGED', entityType: 'promotion', entityId: p.id, storeId: p.storeIds.length === 1 ? p.storeIds[0] : undefined,
+          summary: `Promotion "${p.name}": ${changes.map((k) => `${k} ${show(before[k])} → ${show(after[k])}`).join(', ')}`,
+          details: { changes: Object.fromEntries(changes.map((k) => [k, { from: before[k], to: after[k] }])) },
+        });
+      }
+    }
     return p;
   }
 
-  async remove(id: string) {
+  async remove(id: string, by?: Principal) {
+    const existing = await this.prisma.promotion.findUnique({ where: { id } });
     await this.prisma.promotion.delete({ where: { id } });
     this.cache.clear();
+    if (by && existing) {
+      this.audit.add(by, {
+        action: 'PROMOTION_DELETED', entityType: 'promotion', entityId: id, storeId: existing.storeIds.length === 1 ? existing.storeIds[0] : undefined,
+        summary: `Promotion "${existing.name}" deleted`, details: promoSnapshot(existing),
+      });
+    }
   }
 
   /**
@@ -203,23 +233,31 @@ export class PromotionsController {
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Post()
-  create(@Body() dto: CreatePromotionDto) {
-    return this.promotions.create(dto);
+  create(@CurrentPrincipal() p: Principal, @Body() dto: CreatePromotionDto) {
+    return this.promotions.create(dto, p);
   }
 
   @Roles(Role.SUPER_ADMIN)
   @Scopes('products:write')
   @Patch(':id')
-  update(@Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePromotionDto) {
-    return this.promotions.update(id, dto);
+  update(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePromotionDto) {
+    return this.promotions.update(id, dto, p);
   }
 
   @Roles(Role.SUPER_ADMIN)
   @Delete(':id')
   @HttpCode(204)
-  async remove(@CurrentPrincipal() _p: Principal, @Param('id', ParseUUIDPipe) id: string) {
-    await this.promotions.remove(id);
+  async remove(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
+    await this.promotions.remove(id, p);
   }
+}
+
+/** The fields shown in the audit log (values as plain JSON). */
+function promoSnapshot(p: Prisma.PromotionGetPayload<object>) {
+  const r = p as unknown as Record<string, unknown>;
+  const plain = (v: unknown) => (v instanceof Date ? v.toISOString() : v !== null && typeof v === 'object' && 'toFixed' in (v as object) ? Number(v) : v);
+  const keys = ['name', 'description', 'type', 'value', 'buyQty', 'getQty', 'isActive', 'allProducts', 'productIds', 'categoryIds', 'storeIds', 'startsAt', 'endsAt', 'daysOfWeek', 'startMinute', 'endMinute', 'priority'];
+  return Object.fromEntries(keys.filter((k) => k in r).map((k) => [k, plain(r[k])]));
 }
 
 @Module({ controllers: [PromotionsController], providers: [PromotionsService], exports: [PromotionsService] })
