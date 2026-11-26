@@ -1485,3 +1485,16 @@ model PriceChange {
   @@index([createdAt])
   @@map("price_changes")
 }
+
+/// Reports sent automatically (the nightly Telegram summary): one row per kind and day, written before sending,
+/// so a restart or a second API container never sends the same day twice.
+model ReportSend {
+  kind   String    @db.VarChar(30)
+  day    DateTime  @db.Date
+  sentAt DateTime? @map("sent_at")
+  error  String?   @db.VarChar(300)
+  tries  Int       @default(0)
+
+  @@id([kind, day])
+  @@map("report_sends")
+}
