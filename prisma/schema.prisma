@@ -105,6 +105,8 @@ model Store {
   printCustomer    Boolean @default(true) @map("print_customer")
   printCashierCopy Boolean @default(false) @map("print_cashier_copy")
   printKitchen     Boolean @default(false) @map("print_kitchen")
+  /// Kitchen tickets per station: [{ id, name, categoryIds }] (a category covers its sub-categories). Empty = one ticket.
+  kitchenStations  Json    @default("[]") @map("kitchen_stations")
 
   /// Cashier controls: biggest manual discount a cashier may give without a manager PIN (% of the sale)
   cashierMaxDiscountPercent Decimal @default(10) @map("cashier_max_discount_percent") @db.Decimal(5, 2)
