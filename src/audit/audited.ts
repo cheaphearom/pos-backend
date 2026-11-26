@@ -13,7 +13,7 @@ import { CallHandler, ExecutionContext, forwardRef, Inject, Injectable, Logger, 
 import { Reflector } from '@nestjs/core';
 import { from, Observable, switchMap, tap } from 'rxjs';
 import { PrismaService } from '../prisma/prisma.service';
-// audit.module.ts imports this file too: AuditService is reached lazily (forwardRef)
+// AuditService is reached lazily (forwardRef): controllers import this file early
 import type { AuditEntry } from './audit.module';
 import { AuditService } from './audit.module';
 
@@ -39,6 +39,9 @@ export const Audit = (action: string, describe: AuditMeta['describe'], load?: Au
 /** "name, price, isActive" — the fields a request changed (for summaries). */
 export const fieldsOf = (body: unknown) =>
   body && typeof body === 'object' && !Buffer.isBuffer(body) ? Object.keys(body as object).filter((k) => !/pin|password|secret|token|key$/i.test(k)).join(', ') : '';
+
+/** A wallet card number as "••••7812": the full number is what customers scan to pay, so it is not kept in the log. */
+export const maskCard = (n: unknown) => (typeof n === 'string' && n.length >= 4 ? `••••${n.slice(-4)}` : '');
 
 /** A copy of the body without secrets, for `details`. */
 export const safeBody = (body: unknown) => {

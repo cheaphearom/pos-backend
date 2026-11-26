@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { AuditInterceptor } from './audit/audited';
 import { BullModule } from '@nestjs/bullmq';
 import { Module } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './auth/auth.module';
@@ -93,6 +94,8 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     { provide: APP_GUARD, useClass: ClientThrottlerGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
+    // writes the audit log entries of controller methods marked with @Audit (audit/audited.ts)
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
   ],
 })
 export class AppModule {}

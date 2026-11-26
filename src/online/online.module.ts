@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit } from '../audit/audited';
 import { BadRequestException, Body, Controller, Get, Headers, HttpCode, Injectable, Logger, Module, NotFoundException, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -361,12 +362,20 @@ export class OnlineOrdersController {
 
   @ApiBearerAuth()
   @Post('online-orders/:id/confirm-payment')
+  @Audit('ONLINE_ORDER_PAID', ({ before, result: r }) => ({
+    entityType: 'online_order', entityId: r?.id, storeId: before?.storeId,
+    summary: `Online order of ${before?.customerName ?? 'a customer'} ($${Number(before?.total ?? r?.total ?? 0).toFixed(2)}, ${r?.payMethod ?? ''}) marked paid${r?.saleId ? ': sale created' : ''}`,
+  }), (db, c) => db.onlineOrder.findUnique({ where: { id: c.params.id }, select: { storeId: true, customerName: true, total: true, status: true, orderType: true, tableNo: true } }))
   confirm(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     return this.online.confirmPaid(p, id);
   }
 
   @ApiBearerAuth()
   @Post('online-orders/:id/cancel')
+  @Audit('ONLINE_ORDER_CANCELLED', ({ before, result: r }) => ({
+    entityType: 'online_order', entityId: r?.id, storeId: before?.storeId,
+    summary: `Online order of ${before?.customerName ?? 'a customer'} ($${Number(before?.total ?? 0).toFixed(2)}${before?.orderType === 'DINE_IN' && before?.tableNo ? `, table ${before.tableNo}` : ''}) cancelled (was ${String(before?.status ?? '').toLowerCase().replace(/_/g, ' ')})`,
+  }), (db, c) => db.onlineOrder.findUnique({ where: { id: c.params.id }, select: { storeId: true, customerName: true, total: true, status: true, orderType: true, tableNo: true } }))
   cancel(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {
     return this.online.cancel(p, id);
   }

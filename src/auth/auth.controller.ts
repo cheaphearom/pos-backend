@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Chea Phearom. All rights reserved.
 // Proprietary and confidential: see the LICENSE file.
+import { Audit } from '../audit/audited';
 import { Body, Controller, ForbiddenException, Get, HttpCode, Post, Req, Res } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Role } from '@prisma/client';
@@ -54,6 +55,7 @@ export class AuthController {
   @ApiBearerAuth()
   @Post('change-password')
   @HttpCode(204)
+  @Audit('PASSWORD_CHANGED', () => ({ entityType: 'user', summary: 'Changed their own password' }))
   changePassword(@CurrentPrincipal() p: Principal, @Body() dto: ChangePasswordDto) {
     return this.auth.changePassword(p.id, dto.currentPassword, dto.newPassword);
   }
