@@ -10,9 +10,15 @@ export interface Principal {
   name: string;
   role?: Role; // users only
   scopes: string[]; // api keys only
-  /** Store ids this caller may touch; 'ALL' for super admins and unrestricted keys. */
+  /** Store ids this caller may touch; 'ALL' for super admins, admins and unrestricted keys. */
   storeIds: string[] | 'ALL';
+  /** ADMIN users: the owner areas a super admin allowed (common/permissions.ts) */
+  permissions?: string[];
 }
+
+/** Super admin, or an admin allowed this owner area. */
+export const hasPermission = (p: Principal, key: string) =>
+  p.kind === 'user' && (p.role === 'SUPER_ADMIN' || (p.role === 'ADMIN' && !!p.permissions?.includes(key)));
 
 export function canAccessStore(p: Principal, storeId: string): boolean {
   return p.storeIds === 'ALL' || p.storeIds.includes(storeId);

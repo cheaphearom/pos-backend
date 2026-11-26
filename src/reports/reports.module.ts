@@ -6,7 +6,7 @@ import { Prisma, Role } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { IsDateString, IsIn, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
 import { REPORT_TIMEZONE } from '../config';
-import { CurrentPrincipal, Roles, Scopes } from '../common/decorators';
+import { CurrentPrincipal, Permission, Roles, Scopes } from '../common/decorators';
 import { assertStoreAccess, Principal } from '../common/principal';
 import { PrismaService } from '../prisma/prisma.service';
 import { DailySummaryService } from './daily-summary';
@@ -712,7 +712,7 @@ export class ReportsController {
   }
 
   /** Send the summary for today (or ?date=) to Telegram now. */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('monitor')
   @Post('daily-summary/send')
   sendDailySummary(@Query('date') date?: string) {
     return this.daily.sendNow(date);

@@ -14,6 +14,7 @@ datasource db {
 
 enum Role {
   SUPER_ADMIN // all stores, all settings
+  ADMIN // all stores; store manager rights plus the owner areas a super admin ticks (users.permissions)
   STORE_MANAGER // manages assigned stores
   CASHIER // sells in assigned stores
 }
@@ -154,6 +155,8 @@ model User {
   lastLoginAt     DateTime? @map("last_login_at")
   /// Managers: PIN typed on a cashier's POS to approve a big discount, refund or void
   approvalPinHash String?   @map("approval_pin_hash")
+  /// ADMIN only: the owner areas a super admin allows (src/common/permissions.ts)
+  permissions     String[]  @default([])
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 

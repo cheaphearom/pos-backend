@@ -4,7 +4,7 @@ import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseBoolPipe, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
-import { CurrentPrincipal, Roles, Scopes } from '../common/decorators';
+import { CurrentPrincipal, Permission, Roles, Scopes } from '../common/decorators';
 import { Principal } from '../common/principal';
 import { CreateStoreWithProductsDto, UpdateStoreDto } from './stores.dto';
 import { StoresService } from './stores.service';
@@ -39,7 +39,7 @@ export class StoresController {
     return this.stores.get(p, id);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('stores')
   @Post()
   create(@Body() dto: CreateStoreWithProductsDto) {
     return this.stores.create(dto);

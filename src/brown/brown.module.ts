@@ -4,7 +4,7 @@ import { Body, Controller, Get, Module, Param, ParseUUIDPipe, Post } from '@nest
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { AuditService } from '../audit/audit.module';
-import { CurrentPrincipal, Roles } from '../common/decorators';
+import { CurrentPrincipal, Permission, Roles } from '../common/decorators';
 import { Principal } from '../common/principal';
 import { BrownSyncAllDto, BrownSyncDto } from './brown.dto';
 import { BrownService } from './brown.service';
@@ -19,14 +19,14 @@ export class BrownController {
   ) {}
 
   /** The default BROWN API address (shown in the Sync dialog). */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('integrations')
   @Get('brown-sync/settings')
   settings() {
     return this.brown.settings();
   }
 
   /** Sync every active store that has a BROWN store id. Runs in the background; returns the run to follow with GET. */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('integrations')
   @Post('brown-sync-all')
   async syncAll(@CurrentPrincipal() p: Principal, @Body() dto: BrownSyncAllDto) {
     return this.brown.startSyncAll(
@@ -43,14 +43,14 @@ export class BrownController {
   }
 
   /** Progress and results of a "sync all stores" run */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('integrations')
   @Get('brown-sync-all/:jobId')
   syncAllStatus(@Param('jobId', ParseUUIDPipe) jobId: string) {
     return this.brown.syncAllStatus(jobId);
   }
 
   /** Sync this store's menu from the BROWN system: new items are created, existing ones (same SKU) updated. */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('integrations')
   @Post(':id/brown-sync')
   async sync(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: BrownSyncDto) {
     const r = await this.brown.sync(id, dto);

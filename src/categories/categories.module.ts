@@ -5,7 +5,7 @@ import { Body, Controller, Delete, Get, HttpCode, Injectable, Module, Param, Par
 import { ApiBearerAuth, ApiSecurity, ApiTags, PartialType } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
-import { Roles, Scopes } from '../common/decorators';
+import { Permission, Roles, Scopes } from '../common/decorators';
 import { PrismaService } from '../prisma/prisma.service';
 
 export class CreateCategoryDto {
@@ -60,7 +60,7 @@ export class CategoriesController {
     return this.categories.list();
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('catalogue')
   @Scopes('products:write')
   @Post()
   @Audit('CATEGORY_CREATED', ({ result: r }) => ({ entityType: 'category', entityId: r?.id, summary: `Category "${r?.name}" created` }))
@@ -68,7 +68,7 @@ export class CategoriesController {
     return this.categories.create(dto);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('catalogue')
   @Scopes('products:write')
   @Patch(':id')
   @Audit('CATEGORY_CHANGED', ({ result: r, body }) => ({ entityType: 'category', entityId: r?.id, summary: `Category "${r?.name}": ${fieldsOf(body)}`, details: safeBody(body) }))
@@ -76,7 +76,7 @@ export class CategoriesController {
     return this.categories.update(id, dto);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('catalogue')
   @Delete(':id')
   @HttpCode(204)
   @Audit('CATEGORY_DELETED', ({ params, before }) => ({ entityType: 'category', entityId: params.id, summary: `Category "${before?.name ?? params.id}" deleted` }), (db, c) => db.category.findUnique({ where: { id: c.params.id } }))

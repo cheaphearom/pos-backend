@@ -154,7 +154,7 @@ export class ApprovalsService {
     const managers = await this.prisma.user.findMany({
       where: {
         isActive: true, approvalPinHash: { not: null },
-        OR: [{ role: Role.SUPER_ADMIN }, { role: Role.STORE_MANAGER, stores: { some: { storeId: dto.storeId } } }],
+        OR: [{ role: { in: [Role.SUPER_ADMIN, Role.ADMIN] } }, { role: Role.STORE_MANAGER, stores: { some: { storeId: dto.storeId } } }],
       },
       select: { id: true, fullName: true, approvalPinHash: true },
     });

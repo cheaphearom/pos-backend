@@ -14,6 +14,10 @@ export const Public = () => SetMetadata(IS_PUBLIC, true);
 /** Staff roles allowed (SUPER_ADMIN is always allowed). No decorator = any logged-in user. */
 export const Roles = (...roles: Role[]) => SetMetadata(ROLES, roles);
 
+export const PERMISSION = 'adminPermission';
+/** On a super admin only endpoint: an ADMIN with this permission (common/permissions.ts) may use it too. */
+export const Permission = (key: import('./permissions').AdminPermission) => SetMetadata(PERMISSION, key);
+
 /**
  * API-key scopes that may call this endpoint (any one of them).
  * Endpoints without @Scopes cannot be called with an API key.

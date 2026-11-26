@@ -6,7 +6,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { ArrayMinSize, IsArray, IsDateString, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { createHash, randomBytes } from 'crypto';
-import { CurrentPrincipal, Roles } from '../common/decorators';
+import { CurrentPrincipal, Permission, Roles } from '../common/decorators';
 import { Principal } from '../common/principal';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -84,7 +84,7 @@ export class ApiKeysService {
 
 @ApiTags('Integrations: API keys')
 @ApiBearerAuth()
-@Roles(Role.SUPER_ADMIN)
+@Roles(Role.SUPER_ADMIN) @Permission('integrations')
 @Controller('api-keys')
 export class ApiKeysController {
   constructor(private readonly keys: ApiKeysService) {}

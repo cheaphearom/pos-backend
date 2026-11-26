@@ -61,7 +61,7 @@ export class AuthService {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
       select: {
-        id: true, email: true, fullName: true, phone: true, role: true, lastLoginAt: true,
+        id: true, email: true, fullName: true, phone: true, role: true, lastLoginAt: true, permissions: true,
         stores: { select: { store: { select: { id: true, code: true, name: true } } } },
       },
     });

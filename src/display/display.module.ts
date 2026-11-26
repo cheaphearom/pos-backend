@@ -14,7 +14,7 @@ import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { IsBoolean, IsDateString, IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength, ValidateIf } from 'class-validator';
 import type { Response } from 'express';
-import { CurrentPrincipal, Public, Roles, Scopes } from '../common/decorators';
+import { CurrentPrincipal, Permission, Public, Roles, Scopes } from '../common/decorators';
 import { assertStoreAccess, Principal } from '../common/principal';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -169,7 +169,7 @@ export class DisplayController {
   constructor(private readonly display: DisplayService) {}
 
   /** Every picture (without the picture data), for the admin page. */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('display')
   @Scopes('products:read')
   @Get()
   list() {
@@ -195,7 +195,7 @@ export class DisplayController {
     res.send(Buffer.from(row.image));
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('display')
   @Scopes('products:write')
   @Post()
   @Audit('DISPLAY_SLIDE_ADDED', ({ result: r }) => ({ entityType: 'display_slide', entityId: r?.id, summary: `Customer display slide "${r?.title ?? ''}" added` }))
@@ -203,7 +203,7 @@ export class DisplayController {
     return this.display.upload(body, contentType, q);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('display')
   @Scopes('products:write')
   @Patch(':id')
   @Audit('DISPLAY_SLIDE_CHANGED', ({ result: r, body }) => ({ entityType: 'display_slide', entityId: r?.id, summary: `Customer display slide "${r?.title ?? ''}": ${fieldsOf(body)}`, details: safeBody(body) }))
@@ -211,7 +211,7 @@ export class DisplayController {
     return this.display.update(id, dto);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('display')
   @Scopes('products:write')
   @Post(':id/move')
   @HttpCode(200)
@@ -220,7 +220,7 @@ export class DisplayController {
     return this.display.move(id, dto.move);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('display')
   @Scopes('products:write')
   @Delete(':id')
   @HttpCode(204)
