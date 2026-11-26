@@ -347,6 +347,77 @@ export class ReportsService {
     return { from, to, data: data.map((r) => ({ ...r, sharePercent: total ? round2((r.revenue / total) * 100) : 0 })) };
   }
 
+  /**
+   * Sizes and drink options sold (from each sale line's snapshot of its options), after refunds:
+   * how many items had each option, and the extra charged for it. `sizes`: the Size group per drink.
+   */
+  async options(p: Principal, q: ReportQueryDto) {
+    const { where, from, to } = this.scope(p, q);
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT m->>'group' AS "group", m->>'option' AS option,
+             sum(si.quantity - si.refunded_qty) AS quantity,
+             sum((si.quantity - si.refunded_qty) * coalesce((m->>'price')::numeric, 0)) AS extra
+        FROM sale_items si JOIN sales s ON s.id = si.sale_id
+        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(si.modifiers::jsonb) = 'array' THEN si.modifiers::jsonb ELSE '[]'::jsonb END) m
+       WHERE ${where} AND s.status <> 'VOIDED'
+       GROUP BY 1, 2
+       ORDER BY 1, quantity DESC`;
+    const sizes = await this.prisma.$queryRaw<any[]>`
+      SELECT si.product_id AS "productId", max(si.name) AS name, m->>'option' AS option, sum(si.quantity - si.refunded_qty) AS quantity
+        FROM sale_items si JOIN sales s ON s.id = si.sale_id
+        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(si.modifiers::jsonb) = 'array' THEN si.modifiers::jsonb ELSE '[]'::jsonb END) m
+       WHERE ${where} AND s.status <> 'VOIDED' AND lower(m->>'group') = 'size'
+       GROUP BY 1, 3`;
+    // one row per group, options ordered by how often they were chosen
+    type OptionRow = { option: string; quantity: number; extra: number; sharePercent: number };
+    type GroupRow = { group: string; quantity: number; extra: number; options: OptionRow[] };
+    const groups = new Map<string, GroupRow>();
+    for (const r of rows) {
+      const g: GroupRow = groups.get(r.group) ?? { group: r.group, quantity: 0, extra: 0, options: [] };
+      const qty = Math.round(num(r.quantity) * 1000) / 1000;
+      if (qty <= 0) continue;
+      g.options.push({ option: r.option, quantity: qty, extra: round2(num(r.extra)), sharePercent: 0 });
+      g.quantity += qty;
+      g.extra += num(r.extra);
+      groups.set(r.group, g);
+    }
+    const data = [...groups.values()].map((g) => ({
+      ...g, extra: round2(g.extra),
+      options: g.options.map((o) => ({ ...o, sharePercent: g.quantity ? round2((o.quantity / g.quantity) * 100) : 0 })),
+    })).sort((a, b) => (a.group.toLowerCase() === 'size' ? -1 : b.group.toLowerCase() === 'size' ? 1 : b.quantity - a.quantity));
+    // sizes per drink: { name, total, sizes: { S: 3, M: 5 } }, best sellers first
+    type DrinkRow = { productId: string; name: string; total: number; sizes: Record<string, number> };
+    const drinks = new Map<string, DrinkRow>();
+    for (const r of sizes) {
+      const qty = Math.round(num(r.quantity) * 1000) / 1000;
+      if (qty <= 0) continue;
+      const d: DrinkRow = drinks.get(r.productId) ?? { productId: r.productId, name: r.name, total: 0, sizes: {} };
+      d.sizes[r.option] = qty;
+      d.total += qty;
+      drinks.set(r.productId, d);
+    }
+    return { from, to, data, sizes: [...drinks.values()].sort((a, b) => b.total - a.total) };
+  }
+
+  /** Sales by order type (shop sale, takeaway, dine-in, online pick-up, delivery) and channel (POS / online). */
+  async orderTypes(p: Principal, q: ReportQueryDto) {
+    const { where, from, to } = this.scope(p, q);
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT s.order_type::text AS "orderType", s.channel,
+             count(*)::int AS "salesCount", sum(s.amount_due - s.refunded_total) AS net, avg(s.total) AS "averageSale"
+        FROM sales s
+       WHERE ${where} AND s.status <> 'VOIDED'
+       GROUP BY 1, 2 ORDER BY net DESC NULLS LAST`;
+    const total = rows.reduce((t, r) => t + num(r.net), 0);
+    return {
+      from, to,
+      data: rows.map((r) => ({
+        orderType: r.orderType, channel: r.channel, salesCount: r.salesCount, net: round2(num(r.net)),
+        averageSale: round2(num(r.averageSale)), sharePercent: total ? round2((num(r.net) / total) * 100) : 0,
+      })),
+    };
+  }
+
   /** Current stock value per store (at cost and at selling price). */
   async inventoryValue(p: Principal, storeId?: string) {
     if (storeId) assertStoreAccess(p, storeId);
@@ -464,6 +535,18 @@ export class ReportsController {
   @Get('categories')
   categories(@CurrentPrincipal() p: Principal, @Query() q: ReportQueryDto) {
     return this.reports.categories(p, q);
+  }
+
+  /** Sizes and drink options sold. */
+  @Get('options')
+  options(@CurrentPrincipal() p: Principal, @Query() q: ReportQueryDto) {
+    return this.reports.options(p, q);
+  }
+
+  /** Sales by order type and channel. */
+  @Get('order-types')
+  orderTypes(@CurrentPrincipal() p: Principal, @Query() q: ReportQueryDto) {
+    return this.reports.orderTypes(p, q);
   }
 
   @Get('inventory-value')
