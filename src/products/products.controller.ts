@@ -8,7 +8,7 @@ import { sniffImage, SLIDE_TYPES } from '../display/display.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
-import { CurrentPrincipal, Public, Roles, Scopes } from '../common/decorators';
+import { CurrentPrincipal, Permission, Public, Roles, Scopes } from '../common/decorators';
 import { Principal } from '../common/principal';
 import { BulkPriceDto, BulkUpsertProductsDto, CreateProductDto, ProductQueryDto, SetSizePricesDto, UpdateProductDto } from './products.dto';
 import { ProductsService } from './products.service';
@@ -34,7 +34,7 @@ export class ProductsController {
    * Upload the product's photo: the picture itself as the body (JPG, PNG or WebP, at most 2 MB; the portal sends it
    * resized to 800 px). Kept on this server; the product's imageUrl then points to it.
    */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:write')
   @Post(':id/image')
   @HttpCode(200)
@@ -55,7 +55,7 @@ export class ProductsController {
   }
 
   /** Remove the uploaded photo. */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:write')
   @Delete(':id/image')
   @HttpCode(204)
@@ -106,7 +106,7 @@ export class ProductsController {
     return this.products.sizePrices(id);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:write')
   @Put(':id/size-prices')
   async setSizePrices(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: SetSizePricesDto) {
@@ -118,7 +118,7 @@ export class ProductsController {
   }
 
   /** Scheduled price changes: waiting, done, failed and cancelled (latest 100). */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:read')
   @Get('price-schedules')
   priceSchedules() {
@@ -131,7 +131,7 @@ export class ProductsController {
     return this.products.get(p, id, storeId);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:write')
   @Post()
   @Audit('PRODUCT_CREATED', ({ result: r, body }) => ({ entityType: 'product', entityId: r?.sku ?? body?.sku, summary: `Product ${r?.sku ?? body?.sku} ${r?.name ?? body?.name} created, price $${Number(r?.sellPrice ?? body?.sellPrice ?? 0).toFixed(2)}${(body?.stores ?? []).length ? `, sold in ${body.stores.length} store(s)` : ''}` }))
@@ -142,7 +142,7 @@ export class ProductsController {
   }
 
   /** Bulk price change: what would change (nothing is saved). */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:write')
   @Post('bulk-price/preview')
   @HttpCode(200)
@@ -151,7 +151,7 @@ export class ProductsController {
   }
 
   /** Bulk price change: apply it (all products in one go) and record it in the audit log. */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:write')
   @Post('bulk-price')
   @HttpCode(200)
@@ -176,14 +176,14 @@ export class ProductsController {
   }
 
   /** Schedule a bulk price change for later (applied by the server at runAt). */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:write')
   @Post('bulk-price/schedule')
   schedulePrices(@CurrentPrincipal() p: Principal, @Body() dto: SchedulePriceDto) {
     return this.schedules.create(p, dto);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:write')
   @Post('price-schedules/:id/cancel')
   @HttpCode(200)
@@ -192,7 +192,7 @@ export class ProductsController {
   }
 
   /** Create or update up to 1000 products at once, matched by SKU. */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:write')
   @Post('bulk')
   @Audit('PRODUCTS_IMPORTED', ({ body, result: r }) => ({ entityType: 'product', summary: `Products imported: ${(body?.products ?? []).length} row(s)${r?.created !== undefined ? ` (${r.created} new, ${r.updated ?? 0} updated)` : ''}` }))
@@ -200,7 +200,7 @@ export class ProductsController {
     return this.history.track(null, metaOf(p, 'IMPORT'), () => this.products.bulkUpsert(dto.products));
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('products')
   @Scopes('products:write')
   @Patch(':id')
   async update(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdateProductDto) {

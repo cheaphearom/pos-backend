@@ -7,7 +7,7 @@ import { Role } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 import { Queue } from 'bullmq';
-import { Roles } from '../common/decorators';
+import { Permission, Roles } from '../common/decorators';
 import { startHeartbeat } from '../logging/heartbeat';
 import { onLogEvent, rememberStoreName } from '../logging/logger';
 import { PrismaService } from '../prisma/prisma.service';
@@ -160,7 +160,7 @@ class LimitQuery {
 /** System monitoring for super admins: health of every part, request metrics, anomaly detector. */
 @ApiTags('Monitoring')
 @ApiBearerAuth()
-@Roles(Role.SUPER_ADMIN)
+@Roles(Role.SUPER_ADMIN) @Permission('monitor')
 @Controller('monitoring')
 export class MonitoringController {
   constructor(

@@ -4,7 +4,7 @@ import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Pa
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
 import { ArrayMinSize, IsArray, IsBoolean, IsIn, IsOptional, IsUrl } from 'class-validator';
-import { Roles } from '../common/decorators';
+import { Permission, Roles } from '../common/decorators';
 import { PageQueryDto, pageArgs, toPage } from '../common/pagination';
 import { PrismaService } from '../prisma/prisma.service';
 import { WEBHOOK_EVENTS } from './webhook-events';
@@ -32,7 +32,7 @@ export class UpdateWebhookDto {
 
 @ApiTags('Integrations: Webhooks')
 @ApiBearerAuth()
-@Roles(Role.SUPER_ADMIN)
+@Roles(Role.SUPER_ADMIN) @Permission('integrations')
 @Controller('webhooks')
 export class WebhooksController {
   constructor(

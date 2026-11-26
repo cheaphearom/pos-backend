@@ -6,7 +6,7 @@ import { Prisma, PromotionType, Role } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { ArrayUnique, IsArray, IsBoolean, IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
 import { REPORT_TIMEZONE } from '../config';
-import { CurrentPrincipal, Roles, Scopes } from '../common/decorators';
+import { CurrentPrincipal, Permission, Roles, Scopes } from '../common/decorators';
 import { PageQueryDto, pageArgs, toPage } from '../common/pagination';
 import { assertStoreAccess, Principal } from '../common/principal';
 import { AuditService } from '../audit/audit.module';
@@ -230,21 +230,21 @@ export class PromotionsController {
     return this.promotions.get(id);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('marketing')
   @Scopes('products:write')
   @Post()
   create(@CurrentPrincipal() p: Principal, @Body() dto: CreatePromotionDto) {
     return this.promotions.create(dto, p);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('marketing')
   @Scopes('products:write')
   @Patch(':id')
   update(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePromotionDto) {
     return this.promotions.update(id, dto, p);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('marketing')
   @Delete(':id')
   @HttpCode(204)
   async remove(@CurrentPrincipal() p: Principal, @Param('id', ParseUUIDPipe) id: string) {

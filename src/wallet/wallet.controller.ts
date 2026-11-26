@@ -5,7 +5,7 @@ import { AuditService } from '../audit/audit.module';
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
-import { CurrentPrincipal, Roles, Scopes } from '../common/decorators';
+import { CurrentPrincipal, Permission, Roles, Scopes } from '../common/decorators';
 import { PageQueryDto } from '../common/pagination';
 import { Principal } from '../common/principal';
 import { ActivateCardDto, AdjustBalanceDto, CardQueryDto, CreateCardsDto, ReasonDto, ReplaceCardDto, SetPinDto, TopupDto } from './wallet.dto';
@@ -29,7 +29,7 @@ export class WalletController {
   }
 
   /** Generate new cards to print, or register cards printed by a supplier. */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('wallet')
   @Scopes('wallet:write')
   @Post()
   @Audit('WALLET_CARDS_CREATED', ({ result: r }) => ({ entityType: 'wallet_card', summary: `${r?.created ?? '?'} wallet card(s) created${r?.skipped ? ` (${r.skipped} skipped)` : ''}` }))

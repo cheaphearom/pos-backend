@@ -6,7 +6,7 @@ import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Prisma, Role } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min, ValidateNested } from 'class-validator';
-import { Roles, Scopes } from '../common/decorators';
+import { Permission, Roles, Scopes } from '../common/decorators';
 import { PrismaService } from '../prisma/prisma.service';
 
 export class OptionDto {
@@ -98,7 +98,7 @@ export class ModifiersController {
     return this.modifiers.list();
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('catalogue')
   @Scopes('products:write')
   @Post()
   @Audit('DRINK_OPTIONS_CREATED', ({ result: r, body }) => ({ entityType: 'modifier_group', entityId: r?.id, summary: `Drink options "${body?.name}" created: ${(body?.options ?? []).map((o: any) => o.name).join(', ')}`, details: safeBody(body) }))
@@ -106,7 +106,7 @@ export class ModifiersController {
     return this.modifiers.save(null, dto);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('catalogue')
   @Scopes('products:write')
   @Put(':id')
   @Audit('DRINK_OPTIONS_CHANGED', ({ params, body }) => ({ entityType: 'modifier_group', entityId: params.id, summary: `Drink options "${body?.name}" saved: ${(body?.options ?? []).map((o: any) => `${o.name}${Number(o.priceDelta) ? ` +${Number(o.priceDelta).toFixed(2)}` : ''}`).join(', ')}`, details: safeBody(body) }))
@@ -114,7 +114,7 @@ export class ModifiersController {
     return this.modifiers.save(id, dto);
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('catalogue')
   @Delete(':id')
   @HttpCode(204)
   @Audit('DRINK_OPTIONS_DELETED', ({ params, before }) => ({ entityType: 'modifier_group', entityId: params.id, summary: `Drink options "${before?.name ?? params.id}" deleted` }), (db, c) => db.modifierGroup.findUnique({ where: { id: c.params.id } }))

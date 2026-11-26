@@ -7,7 +7,7 @@ import { Role } from '@prisma/client';
 import { createHash } from 'crypto';
 import { config } from '../config';
 import { PrismaService } from '../prisma/prisma.service';
-import { IS_PUBLIC, ROLES, SCOPES } from './decorators';
+import { IS_PUBLIC, PERMISSION, ROLES, SCOPES } from './decorators';
 import { Principal } from './principal';
 
 /**
@@ -34,7 +34,11 @@ export class AuthGuard implements CanActivate {
     if (principal.kind === 'user') {
       const roles = this.reflector.getAllAndOverride<Role[] | undefined>(ROLES, targets);
       if (roles?.length && principal.role !== Role.SUPER_ADMIN && !roles.includes(principal.role!)) {
-        throw new ForbiddenException('Your role cannot perform this action');
+        // An admin has every store manager right; super admin only endpoints need the matching permission.
+        const perm = this.reflector.getAllAndOverride<string | undefined>(PERMISSION, targets);
+        const adminOk = principal.role === Role.ADMIN
+          && (roles.some((r) => r === Role.STORE_MANAGER || r === Role.CASHIER) || (!!perm && !!principal.permissions?.includes(perm)));
+        if (!adminOk) throw new ForbiddenException(principal.role === Role.ADMIN ? 'A super admin has not allowed you this' : 'Your role cannot perform this action');
       }
     } else {
       const scopes = this.reflector.getAllAndOverride<string[] | undefined>(SCOPES, targets);
@@ -69,7 +73,8 @@ export class AuthGuard implements CanActivate {
       name: user.fullName,
       role: user.role,
       scopes: [],
-      storeIds: user.role === Role.SUPER_ADMIN ? 'ALL' : user.stores.map((s) => s.storeId),
+      storeIds: user.role === Role.SUPER_ADMIN || user.role === Role.ADMIN ? 'ALL' : user.stores.map((s) => s.storeId),
+      permissions: user.role === Role.ADMIN ? user.permissions : undefined,
     };
   }
 

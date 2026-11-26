@@ -6,7 +6,7 @@ import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { Prisma, RecipeEffectType, Role } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsEnum, IsNumber, IsOptional, IsUUID, Min, ValidateNested } from 'class-validator';
-import { Roles, Scopes } from '../common/decorators';
+import { Permission, Roles, Scopes } from '../common/decorators';
 import { PrismaService } from '../prisma/prisma.service';
 import { ingredientUsage, RecipeEffect, usageCost } from './calc';
 
@@ -196,7 +196,7 @@ export class RecipesController {
     return this.recipes.preview(id, (options ?? '').split(',').filter(Boolean));
   }
 
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('catalogue')
   @Scopes('products:write')
   @Put(':productId')
   @Audit('RECIPE_CHANGED', ({ params, body, before }) => ({ entityType: 'product', entityId: params.productId, summary: `Recipe of ${before?.name ?? 'a product'}: ${(body?.items ?? []).length} ingredient(s)`, details: safeBody(body) }), (db, c) => db.product.findUnique({ where: { id: c.params.productId }, select: { name: true } }))
@@ -205,7 +205,7 @@ export class RecipesController {
   }
 
   /** How a drink option changes recipes (applies to every drink with that option). */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('catalogue')
   @Scopes('products:write')
   @Put('options/:optionId/effects')
   @Audit('RECIPE_OPTION_CHANGED', ({ params, body, before }) => ({ entityType: 'modifier_option', entityId: params.optionId, summary: `Ingredients of the option "${before?.name ?? params.optionId}": ${(body?.effects ?? []).length} change(s)`, details: safeBody(body) }), (db, c) => db.modifierOption.findUnique({ where: { id: c.params.optionId }, select: { name: true } }))

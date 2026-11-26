@@ -6,7 +6,7 @@ import { ApiBearerAuth, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { PaymentMethod, Prisma, Role, VoucherStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 import { IsBoolean, IsDateString, IsEnum, IsInt, IsNumber, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
-import { CurrentPrincipal, Roles, Scopes } from '../common/decorators';
+import { CurrentPrincipal, Permission, Roles, Scopes } from '../common/decorators';
 import { PageQueryDto, pageArgs, toPage } from '../common/pagination';
 import { assertStoreAccess, Principal, userIdOf } from '../common/principal';
 import { PrismaService } from '../prisma/prisma.service';
@@ -178,7 +178,7 @@ export class VouchersController {
   }
 
   /** Create vouchers; returns every code (for printing). */
-  @Roles(Role.SUPER_ADMIN)
+  @Roles(Role.SUPER_ADMIN) @Permission('marketing')
   @Scopes('promotions:write')
   @Post('batches')
   @Audit('VOUCHER_BATCH_CREATED', ({ result: r, body }) => ({ entityType: 'voucher_batch', entityId: r?.id ?? r?.batch?.id, summary: `${body?.count} gift voucher(s) "${body?.name}" of $${Number(body?.value).toFixed(2)} created (${body?.sold === false ? 'free' : 'to sell'})`, details: safeBody(body) }))
