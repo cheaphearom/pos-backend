@@ -293,6 +293,60 @@ export class ReportsService {
     return { from, to, data: rows.map((r) => ({ ...r, quantity: num(r.quantity), discount: round2(num(r.discount)), revenue: round2(num(r.revenue)) })) };
   }
 
+  /**
+   * Busy hours: sales by weekday and hour of the day (store time). `days` = how many of each weekday the period has,
+   * so the screen can show an average per day.
+   */
+  async hours(p: Principal, q: ReportQueryDto) {
+    const { where, tz, from, to } = this.scope(p, q);
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT extract(isodow FROM (s.created_at AT TIME ZONE 'UTC') AT TIME ZONE ${tz})::int AS dow,
+             extract(hour FROM (s.created_at AT TIME ZONE 'UTC') AT TIME ZONE ${tz})::int AS hour,
+             count(*)::int AS "salesCount",
+             sum(s.amount_due - s.refunded_total) AS net
+        FROM sales s
+       WHERE ${where} AND s.status <> 'VOIDED'
+       GROUP BY 1, 2 ORDER BY 1, 2`;
+    // how many Mondays, Tuesdays... the period has (1 = Monday)
+    const days: Record<number, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 };
+    for (let d = new Date(from + 'T00:00:00Z'); d <= new Date(to + 'T00:00:00Z'); d = new Date(d.getTime() + 86_400_000)) {
+      days[((d.getUTCDay() + 6) % 7) + 1]++;
+    }
+    return {
+      from, to, tz, days,
+      data: rows.map((r) => ({ dow: r.dow, hour: r.hour, salesCount: r.salesCount, net: round2(num(r.net)) })),
+    };
+  }
+
+  /** Sales and profit per category (the product's category now; "No category" for the others), after refunds. */
+  async categories(p: Principal, q: ReportQueryDto) {
+    const { where, from, to } = this.scope(p, q);
+    const rows = await this.prisma.$queryRaw<any[]>`
+      SELECT c.id, c.name, pc.name AS parent,
+             sum(si.quantity - si.refunded_qty) AS quantity,
+             sum(si.net_amount * (si.quantity - si.refunded_qty) / si.quantity) AS revenue,
+             sum(si.cost_price * (si.quantity - si.refunded_qty)) AS cost,
+             count(DISTINCT s.id)::int AS sales
+        FROM sale_items si JOIN sales s ON s.id = si.sale_id
+        LEFT JOIN products pr ON pr.id = si.product_id
+        LEFT JOIN categories c ON c.id = pr.category_id
+        LEFT JOIN categories pc ON pc.id = c.parent_id
+       WHERE ${where} AND s.status <> 'VOIDED'
+       GROUP BY c.id, c.name, pc.name
+       ORDER BY revenue DESC NULLS LAST`;
+    const data = rows.map((r) => {
+      const revenue = round2(num(r.revenue));
+      const cost = round2(num(r.cost));
+      const profit = round2(revenue - cost);
+      return {
+        id: r.id, name: r.id ? (r.parent ? `${r.parent} › ${r.name}` : r.name) : 'No category', sales: r.sales,
+        quantity: Math.round(num(r.quantity) * 1000) / 1000, revenue, cost, profit, marginPercent: revenue ? round2((profit / revenue) * 100) : 0,
+      };
+    });
+    const total = data.reduce((t, r) => t + r.revenue, 0);
+    return { from, to, data: data.map((r) => ({ ...r, sharePercent: total ? round2((r.revenue / total) * 100) : 0 })) };
+  }
+
   /** Current stock value per store (at cost and at selling price). */
   async inventoryValue(p: Principal, storeId?: string) {
     if (storeId) assertStoreAccess(p, storeId);
@@ -398,6 +452,18 @@ export class ReportsController {
   @Get('promotions')
   promotions(@CurrentPrincipal() p: Principal, @Query() q: ReportQueryDto) {
     return this.reports.promotions(p, q);
+  }
+
+  /** Sales by weekday and hour (busy hours). */
+  @Get('hours')
+  hours(@CurrentPrincipal() p: Principal, @Query() q: ReportQueryDto) {
+    return this.reports.hours(p, q);
+  }
+
+  /** Sales and profit per category. */
+  @Get('categories')
+  categories(@CurrentPrincipal() p: Principal, @Query() q: ReportQueryDto) {
+    return this.reports.categories(p, q);
   }
 
   @Get('inventory-value')
